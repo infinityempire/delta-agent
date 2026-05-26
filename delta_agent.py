@@ -32,13 +32,13 @@ SCRAPER_API_KEY = os.environ.get("SCRAPER_API_KEY", "")
 # ── Config ───────────────────────────────────────────────────────────────────
 SUBREDDITS     = ["entrepreneur", "startups", "smallbusiness", "forhire", "freelance"]
 POSTS_PER_SUB  = 25
-MAX_BODY_CHARS = 1500
+MAX_BODY_CHARS = 800   # trimmed to save Gemini tokens
 TOP_LEADS      = 10
 OUTPUT_DIR     = "output"
 REPORT_PATH    = f"{OUTPUT_DIR}/execution_report.json"
 GEMINI_MODEL   = "gemini-2.5-flash"
-GEMINI_RETRIES = 4
-GEMINI_BACKOFF = [10, 30, 60, 120]   # seconds to wait before each retry
+GEMINI_RETRIES = 3
+GEMINI_BACKOFF = [15, 45, 90]        # seconds to wait before each retry (max 3 attempts)
 
 HEADERS = {
     "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
