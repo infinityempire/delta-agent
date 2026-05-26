@@ -1,8 +1,8 @@
 """
 Delta Agent – Automated Lead Hunter for Tal HaTil
 ==================================================
-Stage 1: Live Reddit Scraper
-Stage 2: Gemini AI Analysis
+Stage 1: Live Reddit Scraper (via ScraperAPI)
+Stage 2: Gemini AI Analysis (gemini-1.5-flash)
 Stage 3: JSON Report Generation
 Stage 4: SMTP Email Delivery
 """
@@ -30,22 +30,21 @@ SMTP_TO         = os.environ.get("SMTP_TO", "")
 SCRAPER_API_KEY = os.environ.get("SCRAPER_API_KEY", "")
 
 # ── Config ───────────────────────────────────────────────────────────────────
-SUBREDDITS = ["entrepreneur", "startups", "smallbusiness", "forhire", "freelance"]
+SUBREDDITS    = ["entrepreneur", "startups", "smallbusiness", "forhire", "freelance"]
 POSTS_PER_SUB = 25
 MAX_BODY_CHARS = 1500
-TOP_LEADS = 10
-OUTPUT_DIR = "output"
-REPORT_PATH = f"{OUTPUT_DIR}/execution_report.json"
+TOP_LEADS     = 10
+OUTPUT_DIR    = "output"
+REPORT_PATH   = f"{OUTPUT_DIR}/execution_report.json"
 
 HEADERS = {
     "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
     "Accept": "application/json, text/plain, */*",
     "Accept-Language": "en-US,en;q=0.9",
-    "Accept-Encoding": "gzip, deflate, br",
     "Connection": "keep-alive"
 }
 
-# ── Startup Checks ───────────────────────────────────────────────────────────
+# ── Startup ───────────────────────────────────────────────────────────────────
 print("=" * 60)
 print("DELTA AGENT – Starting Up")
 print(f"Timestamp: {datetime.now(timezone.utc).isoformat()}")
@@ -60,65 +59,53 @@ if not SCRAPER_API_KEY: missing.append("SCRAPER_API_KEY")
 
 if missing:
     print(f"[CRITICAL] Missing environment variables: {missing}")
-    print("[CRITICAL] Cannot proceed without required secrets. Exiting.")
     sys.exit(1)
 
-print(f"[OK] All required env vars present")
+print("[OK] All required env vars present")
 os.makedirs(OUTPUT_DIR, exist_ok=True)
 
 # ── Stage 1: Reddit Scraper ──────────────────────────────────────────────────
 print("\n[STAGE 1] Scraping Reddit...")
-print(f"  [INFO] Using ScraperAPI proxy to bypass IP restrictions")
 
 raw_posts = []
 for sub in SUBREDDITS:
     reddit_url = f"https://www.reddit.com/r/{sub}/new.json?limit={POSTS_PER_SUB}"
-    # Route through ScraperAPI to avoid GitHub Actions IP blocks
-    url = f"http://api.scraperapi.com?api_key={SCRAPER_API_KEY}&url={requests.utils.quote(reddit_url, safe='')}"
+    proxy_url  = f"http://api.scraperapi.com?api_key={SCRAPER_API_KEY}&url={requests.utils.quote(reddit_url, safe='')}"
     try:
-        resp = requests.get(url, headers=HEADERS, timeout=60)
+        resp = requests.get(proxy_url, headers=HEADERS, timeout=60)
         if resp.status_code != 200:
             print(f"  [WARN] r/{sub}: HTTP {resp.status_code}")
             continue
-        data = resp.json()
-        posts = data.get("data", {}).get("children", [])
+        posts = resp.json().get("data", {}).get("children", [])
         count = 0
         for p in posts:
-            d = p.get("data", {})
-            title = d.get("title", "").strip()
-            body  = d.get("selftext", "").strip()
-            url_p = "https://reddit.com" + d.get("permalink", "")
+            d      = p.get("data", {})
+            title  = d.get("title", "").strip()
+            body   = d.get("selftext", "").strip()
+            url_p  = "https://reddit.com" + d.get("permalink", "")
             author = d.get("author", "")
             score  = d.get("score", 0)
-            # Filter: skip empty, deleted, or too-long posts
             if not title or body in ("", "[deleted]", "[removed]"):
                 continue
             if len(body) > MAX_BODY_CHARS:
                 body = body[:MAX_BODY_CHARS] + "..."
-            raw_posts.append({
-                "subreddit": sub,
-                "title": title,
-                "body": body,
-                "url": url_p,
-                "author": author,
-                "score": score
-            })
+            raw_posts.append({"subreddit": sub, "title": title, "body": body,
+                               "url": url_p, "author": author, "score": score})
             count += 1
         print(f"  [OK] r/{sub}: {count} posts collected")
-        time.sleep(1)  # Be polite to Reddit
+        time.sleep(1)
     except Exception as e:
         print(f"  [ERROR] r/{sub}: {e}")
 
 print(f"\n[STAGE 1] Total posts collected: {len(raw_posts)}")
 
 if not raw_posts:
-    print("[CRITICAL] No posts collected from Reddit. Exiting.")
+    print("[CRITICAL] No posts collected. Exiting.")
     sys.exit(1)
 
 # ── Stage 2: Gemini AI Analysis ──────────────────────────────────────────────
-print("\n[STAGE 2] Analyzing with Gemini AI...")
+print("\n[STAGE 2] Analyzing with Gemini AI (gemini-1.5-flash)...")
 
-# Build the prompt
 posts_text = ""
 for i, p in enumerate(raw_posts):
     posts_text += f"\n--- Post {i+1} ---\n"
@@ -162,32 +149,33 @@ POSTS TO ANALYZE:
 
 Return ONLY valid JSON, no markdown, no explanation outside the JSON."""
 
+leads = []
+summary_he = ""
+
 try:
-    # Use the new google-genai SDK
-    from google import genai
-    client = genai.Client(api_key=GEMINI_API_KEY)
-    response = client.models.generate_content(
-        model="gemini-1.5-flash",
-        contents=prompt
-    )
-    raw_response = response.text.strip()
-    # Strip markdown code blocks if present
-    if raw_response.startswith("```"):
-        raw_response = raw_response.split("```")[1]
-        if raw_response.startswith("json"):
-            raw_response = raw_response[4:]
-    analysis = json.loads(raw_response)
-    leads = analysis.get("leads", [])
+    import google.generativeai as genai
+    genai.configure(api_key=GEMINI_API_KEY)
+    model    = genai.GenerativeModel("gemini-1.5-flash")
+    response = model.generate_content(prompt)
+    raw_resp = response.text.strip()
+    # Strip markdown code fences if present
+    if raw_resp.startswith("```"):
+        parts    = raw_resp.split("```")
+        raw_resp = parts[1] if len(parts) > 1 else raw_resp
+        if raw_resp.startswith("json"):
+            raw_resp = raw_resp[4:]
+    analysis   = json.loads(raw_resp)
+    leads      = analysis.get("leads", [])
     summary_he = analysis.get("summary", "")
     print(f"[OK] Gemini returned {len(leads)} leads")
     print(f"[OK] Summary: {summary_he}")
 except Exception as e:
     print(f"[ERROR] Gemini analysis failed: {e}")
-    leads = []
+    leads      = []
     summary_he = "ניתוח ה-AI נכשל. ראה לוגים לפרטים."
 
 # ── Stage 3: JSON Report ─────────────────────────────────────────────────────
-print("\n[STAGE 3] Generating execution report...")
+print("\n[STAGE 3] Generating report...")
 
 report = {
     "timestamp": datetime.now(timezone.utc).isoformat(),
@@ -209,16 +197,15 @@ print(f"[OK] Report saved to {REPORT_PATH}")
 print("\n[STAGE 4] Sending email report...")
 
 try:
-    msg = MIMEMultipart("mixed")
+    msg   = MIMEMultipart("mixed")
     today = datetime.now(timezone.utc).strftime("%d/%m/%Y")
     msg["Subject"] = f"🎯 Delta Agent – {len(leads)} לידים חדשים | {today}"
     msg["From"]    = SMTP_USER
     msg["To"]      = SMTP_TO
 
-    # Build HTML body
     leads_html = ""
     for lead in leads:
-        priority_color = {"HIGH": "#e74c3c", "MEDIUM": "#f39c12", "LOW": "#27ae60"}.get(lead.get("priority", "LOW"), "#888")
+        color = {"HIGH": "#e74c3c", "MEDIUM": "#f39c12", "LOW": "#27ae60"}.get(lead.get("priority", "LOW"), "#888")
         leads_html += f"""
         <tr>
           <td style="padding:8px;border-bottom:1px solid #eee;font-weight:bold;">{lead.get('rank','')}</td>
@@ -227,7 +214,7 @@ try:
             <small>r/{lead.get('subreddit','')} · u/{lead.get('author','')}</small>
           </td>
           <td style="padding:8px;border-bottom:1px solid #eee;text-align:center;">
-            <span style="background:{priority_color};color:white;padding:2px 8px;border-radius:4px;font-size:12px;">{lead.get('priority','')}</span>
+            <span style="background:{color};color:white;padding:2px 8px;border-radius:4px;font-size:12px;">{lead.get('priority','')}</span>
           </td>
           <td style="padding:8px;border-bottom:1px solid #eee;font-size:13px;">{lead.get('reason','')}</td>
         </tr>"""
@@ -251,35 +238,32 @@ try:
         <tbody>{leads_html}</tbody>
       </table>
       <p style="margin-top:20px;color:#95a5a6;font-size:12px;">
-        סה"כ נסרקו: {len(raw_posts)} פוסטים מ-{len(SUBREDDITS)} subreddits | 
-        קובץ JSON מלא מצורף
+        סה"כ נסרקו: {len(raw_posts)} פוסטים מ-{len(SUBREDDITS)} subreddits | קובץ JSON מלא מצורף
       </p>
     </body></html>"""
 
     msg.attach(MIMEText(html_body, "html", "utf-8"))
 
-    # Attach JSON report
     with open(REPORT_PATH, "rb") as f:
-        attachment = MIMEBase("application", "octet-stream")
-        attachment.set_payload(f.read())
-        encoders.encode_base64(attachment)
-        attachment.add_header("Content-Disposition", f"attachment; filename=delta_report_{today.replace('/','_')}.json")
-        msg.attach(attachment)
+        att = MIMEBase("application", "octet-stream")
+        att.set_payload(f.read())
+        encoders.encode_base64(att)
+        att.add_header("Content-Disposition", f"attachment; filename=delta_report_{today.replace('/','_')}.json")
+        msg.attach(att)
 
-    context = ssl.create_default_context()
-    with smtplib.SMTP_SSL(SMTP_HOST, SMTP_PORT, context=context) as server:
+    ctx = ssl.create_default_context()
+    with smtplib.SMTP_SSL(SMTP_HOST, SMTP_PORT, context=ctx) as server:
         server.login(SMTP_USER, SMTP_PASSWORD)
         server.sendmail(SMTP_USER, SMTP_TO, msg.as_string())
 
-    print(f"[OK] Email sent to {SMTP_TO}")
+    print("[OK] Email sent successfully")
 
 except Exception as e:
     print(f"[ERROR] Email delivery failed: {e}")
-    # Don't exit with error – report was still generated
 
-# ── Done ─────────────────────────────────────────────────────────────────────
+# ── Done ──────────────────────────────────────────────────────────────────────
 print("\n" + "=" * 60)
-print(f"DELTA AGENT – Run Complete")
+print("DELTA AGENT – Run Complete")
 print(f"Posts scanned : {len(raw_posts)}")
 print(f"Leads found   : {len(leads)}")
 print(f"Report saved  : {REPORT_PATH}")
