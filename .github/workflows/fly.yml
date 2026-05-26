@@ -1,7 +1,6 @@
-name: Deploy Delta Agent
+name: Deploy Delta Agent (Fly.io)
 on:
-  push:
-    branches: [main]
+  workflow_dispatch:
 jobs:
   deploy:
     runs-on: ubuntu-latest
