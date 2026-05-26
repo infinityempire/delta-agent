@@ -21,12 +21,13 @@ from email.mime.base import MIMEBase
 from email import encoders
 
 # ── Environment Variables ────────────────────────────────────────────────────
-GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY", "")
-SMTP_HOST      = os.environ.get("SMTP_HOST", "smtp.gmail.com")
-SMTP_PORT      = int(os.environ.get("SMTP_PORT", "465"))
-SMTP_USER      = os.environ.get("SMTP_USER", "")
-SMTP_PASSWORD  = os.environ.get("SMTP_PASSWORD", "")
-SMTP_TO        = os.environ.get("SMTP_TO", "")
+GEMINI_API_KEY  = os.environ.get("GEMINI_API_KEY", "")
+SMTP_HOST       = os.environ.get("SMTP_HOST", "smtp.gmail.com")
+SMTP_PORT       = int(os.environ.get("SMTP_PORT", "465"))
+SMTP_USER       = os.environ.get("SMTP_USER", "")
+SMTP_PASSWORD   = os.environ.get("SMTP_PASSWORD", "")
+SMTP_TO         = os.environ.get("SMTP_TO", "")
+SCRAPER_API_KEY = os.environ.get("SCRAPER_API_KEY", "")
 
 # ── Config ───────────────────────────────────────────────────────────────────
 SUBREDDITS = ["entrepreneur", "startups", "smallbusiness", "forhire", "freelance"]
@@ -51,10 +52,11 @@ print(f"Timestamp: {datetime.now(timezone.utc).isoformat()}")
 print("=" * 60)
 
 missing = []
-if not GEMINI_API_KEY: missing.append("GEMINI_API_KEY")
-if not SMTP_USER:      missing.append("SMTP_USER")
-if not SMTP_PASSWORD:  missing.append("SMTP_PASSWORD")
-if not SMTP_TO:        missing.append("SMTP_TO")
+if not GEMINI_API_KEY:  missing.append("GEMINI_API_KEY")
+if not SMTP_USER:       missing.append("SMTP_USER")
+if not SMTP_PASSWORD:   missing.append("SMTP_PASSWORD")
+if not SMTP_TO:         missing.append("SMTP_TO")
+if not SCRAPER_API_KEY: missing.append("SCRAPER_API_KEY")
 
 if missing:
     print(f"[CRITICAL] Missing environment variables: {missing}")
@@ -66,12 +68,15 @@ os.makedirs(OUTPUT_DIR, exist_ok=True)
 
 # ── Stage 1: Reddit Scraper ──────────────────────────────────────────────────
 print("\n[STAGE 1] Scraping Reddit...")
+print(f"  [INFO] Using ScraperAPI proxy to bypass IP restrictions")
 
 raw_posts = []
 for sub in SUBREDDITS:
-    url = f"https://www.reddit.com/r/{sub}/new.json?limit={POSTS_PER_SUB}"
+    reddit_url = f"https://www.reddit.com/r/{sub}/new.json?limit={POSTS_PER_SUB}"
+    # Route through ScraperAPI to avoid GitHub Actions IP blocks
+    url = f"http://api.scraperapi.com?api_key={SCRAPER_API_KEY}&url={requests.utils.quote(reddit_url, safe='')}"
     try:
-        resp = requests.get(url, headers=HEADERS, timeout=15)
+        resp = requests.get(url, headers=HEADERS, timeout=60)
         if resp.status_code != 200:
             print(f"  [WARN] r/{sub}: HTTP {resp.status_code}")
             continue
