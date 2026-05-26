@@ -27,7 +27,7 @@ jobs:
       - name: Install dependencies
         run: |
           pip install --upgrade pip
-          pip install google-generativeai requests
+          pip install google-genai requests
 
       - name: Run Delta Agent
         env:

@@ -36,7 +36,7 @@ MAX_BODY_CHARS = 1500
 TOP_LEADS      = 10
 OUTPUT_DIR     = "output"
 REPORT_PATH    = f"{OUTPUT_DIR}/execution_report.json"
-GEMINI_MODEL   = "gemini-2.0-flash"
+GEMINI_MODEL   = "gemini-2.5-flash"
 GEMINI_RETRIES = 4
 GEMINI_BACKOFF = [10, 30, 60, 120]   # seconds to wait before each retry
 
@@ -158,9 +158,8 @@ Priority levels: HIGH (score 8-10), MEDIUM (score 5-7), LOW (score 1-4)
 POSTS TO ANALYZE:
 {posts_text}"""
 
-import google.generativeai as genai
-genai.configure(api_key=GEMINI_API_KEY)
-model = genai.GenerativeModel(GEMINI_MODEL)
+from google import genai as genai_new
+_gclient = genai_new.Client(api_key=GEMINI_API_KEY)
 
 leads      = []
 summary_he = "ניתוח ה-AI לא הצליח להשלים."
@@ -169,7 +168,7 @@ gemini_ok  = False
 for attempt in range(GEMINI_RETRIES):
     try:
         print(f"  [INFO] Gemini attempt {attempt + 1}/{GEMINI_RETRIES}...")
-        response = model.generate_content(prompt)
+        response = _gclient.models.generate_content(model=GEMINI_MODEL, contents=prompt)
         raw_resp = response.text.strip()
         # Strip markdown code fences if present
         if raw_resp.startswith("```"):
