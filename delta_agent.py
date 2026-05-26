@@ -155,7 +155,7 @@ summary_he = ""
 try:
     import google.generativeai as genai
     genai.configure(api_key=GEMINI_API_KEY)
-    model    = genai.GenerativeModel("gemini-1.5-flash")
+    model    = genai.GenerativeModel("gemini-1.5-flash-latest")
     response = model.generate_content(prompt)
     raw_resp = response.text.strip()
     # Strip markdown code fences if present
@@ -170,7 +170,9 @@ try:
     print(f"[OK] Gemini returned {len(leads)} leads")
     print(f"[OK] Summary: {summary_he}")
 except Exception as e:
-    print(f"[ERROR] Gemini analysis failed: {e}")
+    import traceback
+    print(f"[ERROR] Gemini analysis failed: {type(e).__name__}: {e}")
+    traceback.print_exc()
     leads      = []
     summary_he = "ניתוח ה-AI נכשל. ראה לוגים לפרטים."
 
