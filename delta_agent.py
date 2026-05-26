@@ -167,7 +167,7 @@ try:
     from google import genai
     client = genai.Client(api_key=GEMINI_API_KEY)
     response = client.models.generate_content(
-        model="gemini-2.0-flash",
+        model="gemini-1.5-flash",
         contents=prompt
     )
     raw_response = response.text.strip()
