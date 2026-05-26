@@ -1,0 +1,46 @@
+name: Run Delta Agent
+
+on:
+  workflow_dispatch:
+    inputs:
+      goal:
+        description: 'Optional: Override the agent goal (leave blank for default)'
+        required: false
+        default: ''
+
+jobs:
+  run-delta:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.10
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.10'
+
+      - name: Install dependencies
+        run: |
+          pip install --upgrade pip
+          pip install google-generativeai pydantic requests playwright
+          playwright install chromium
+          playwright install-deps chromium
+
+      - name: Run Delta Agent
+        env:
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          GITHUB_ACTIONS: 'true'
+          AGENT_GOAL: ${{ github.event.inputs.goal }}
+        run: |
+          python3 delta_agent.py
+
+      - name: Upload execution report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: delta-execution-report
+          path: output/
+          if-no-files-found: warn
