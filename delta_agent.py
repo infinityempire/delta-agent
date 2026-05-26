@@ -2,7 +2,7 @@
 Delta Agent – Automated Lead Hunter for Tal HaTil
 ==================================================
 Stage 1: Live Reddit Scraper (via ScraperAPI)
-Stage 2: Gemini AI Analysis (gemini-1.5-flash)
+Stage 2: Gemini AI Analysis (gemini-2.0-flash, with retry/backoff)
 Stage 3: JSON Report Generation
 Stage 4: SMTP Email Delivery
 """
@@ -30,15 +30,19 @@ SMTP_TO         = os.environ.get("SMTP_TO", "")
 SCRAPER_API_KEY = os.environ.get("SCRAPER_API_KEY", "")
 
 # ── Config ───────────────────────────────────────────────────────────────────
-SUBREDDITS    = ["entrepreneur", "startups", "smallbusiness", "forhire", "freelance"]
-POSTS_PER_SUB = 25
+SUBREDDITS     = ["entrepreneur", "startups", "smallbusiness", "forhire", "freelance"]
+POSTS_PER_SUB  = 25
 MAX_BODY_CHARS = 1500
-TOP_LEADS     = 10
-OUTPUT_DIR    = "output"
-REPORT_PATH   = f"{OUTPUT_DIR}/execution_report.json"
+TOP_LEADS      = 10
+OUTPUT_DIR     = "output"
+REPORT_PATH    = f"{OUTPUT_DIR}/execution_report.json"
+GEMINI_MODEL   = "gemini-2.0-flash"
+GEMINI_RETRIES = 4
+GEMINI_BACKOFF = [10, 30, 60, 120]   # seconds to wait before each retry
 
 HEADERS = {
-    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
+    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+                  "(KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
     "Accept": "application/json, text/plain, */*",
     "Accept-Language": "en-US,en;q=0.9",
     "Connection": "keep-alive"
@@ -47,7 +51,8 @@ HEADERS = {
 # ── Startup ───────────────────────────────────────────────────────────────────
 print("=" * 60)
 print("DELTA AGENT – Starting Up")
-print(f"Timestamp: {datetime.now(timezone.utc).isoformat()}")
+print(f"Timestamp : {datetime.now(timezone.utc).isoformat()}")
+print(f"Model     : {GEMINI_MODEL}")
 print("=" * 60)
 
 missing = []
@@ -65,12 +70,16 @@ print("[OK] All required env vars present")
 os.makedirs(OUTPUT_DIR, exist_ok=True)
 
 # ── Stage 1: Reddit Scraper ──────────────────────────────────────────────────
-print("\n[STAGE 1] Scraping Reddit...")
+print("\n[STAGE 1] Scraping Reddit via ScraperAPI...")
 
 raw_posts = []
 for sub in SUBREDDITS:
     reddit_url = f"https://www.reddit.com/r/{sub}/new.json?limit={POSTS_PER_SUB}"
-    proxy_url  = f"http://api.scraperapi.com?api_key={SCRAPER_API_KEY}&url={requests.utils.quote(reddit_url, safe='')}"
+    proxy_url  = (
+        f"http://api.scraperapi.com"
+        f"?api_key={SCRAPER_API_KEY}"
+        f"&url={requests.utils.quote(reddit_url, safe='')}"
+    )
     try:
         resp = requests.get(proxy_url, headers=HEADERS, timeout=60)
         if resp.status_code != 200:
@@ -84,13 +93,14 @@ for sub in SUBREDDITS:
             body   = d.get("selftext", "").strip()
             url_p  = "https://reddit.com" + d.get("permalink", "")
             author = d.get("author", "")
-            score  = d.get("score", 0)
             if not title or body in ("", "[deleted]", "[removed]"):
                 continue
             if len(body) > MAX_BODY_CHARS:
                 body = body[:MAX_BODY_CHARS] + "..."
-            raw_posts.append({"subreddit": sub, "title": title, "body": body,
-                               "url": url_p, "author": author, "score": score})
+            raw_posts.append({
+                "subreddit": sub, "title": title, "body": body,
+                "url": url_p, "author": author
+            })
             count += 1
         print(f"  [OK] r/{sub}: {count} posts collected")
         time.sleep(1)
@@ -103,17 +113,19 @@ if not raw_posts:
     print("[CRITICAL] No posts collected. Exiting.")
     sys.exit(1)
 
-# ── Stage 2: Gemini AI Analysis ──────────────────────────────────────────────
-print("\n[STAGE 2] Analyzing with Gemini AI (gemini-1.5-flash)...")
+# ── Stage 2: Gemini AI Analysis (with retry/backoff) ─────────────────────────
+print(f"\n[STAGE 2] Analyzing with Gemini AI ({GEMINI_MODEL})...")
 
 posts_text = ""
 for i, p in enumerate(raw_posts):
-    posts_text += f"\n--- Post {i+1} ---\n"
-    posts_text += f"Subreddit: r/{p['subreddit']}\n"
-    posts_text += f"Title: {p['title']}\n"
-    posts_text += f"Body: {p['body']}\n"
-    posts_text += f"URL: {p['url']}\n"
-    posts_text += f"Author: {p['author']}\n"
+    posts_text += (
+        f"\n--- Post {i+1} ---\n"
+        f"Subreddit: r/{p['subreddit']}\n"
+        f"Title: {p['title']}\n"
+        f"Body: {p['body']}\n"
+        f"URL: {p['url']}\n"
+        f"Author: {p['author']}\n"
+    )
 
 prompt = f"""You are an expert sales analyst for a digital marketing and automation agency.
 Your client, Tal HaTil, sells 40 courses and services in web development, marketing automation, and lead generation.
@@ -124,7 +136,7 @@ A good lead is someone who:
 - Is actively asking for help or expressing frustration with their current situation
 - Seems like a business owner, entrepreneur, or freelancer (not a student doing homework)
 
-For each of the top {TOP_LEADS} leads, return a JSON array with this exact structure:
+Return a JSON object with this exact structure (no markdown, no explanation outside the JSON):
 {{
   "leads": [
     {{
@@ -142,39 +154,47 @@ For each of the top {TOP_LEADS} leads, return a JSON array with this exact struc
 }}
 
 Priority levels: HIGH (score 8-10), MEDIUM (score 5-7), LOW (score 1-4)
-Score = how likely this person needs Tal HaTil's services (1-10)
 
 POSTS TO ANALYZE:
-{posts_text}
+{posts_text}"""
 
-Return ONLY valid JSON, no markdown, no explanation outside the JSON."""
+import google.generativeai as genai
+genai.configure(api_key=GEMINI_API_KEY)
+model = genai.GenerativeModel(GEMINI_MODEL)
 
-leads = []
-summary_he = ""
+leads      = []
+summary_he = "ניתוח ה-AI לא הצליח להשלים."
+gemini_ok  = False
 
-try:
-    import google.generativeai as genai
-    genai.configure(api_key=GEMINI_API_KEY)
-    model    = genai.GenerativeModel("gemini-1.5-flash-latest")
-    response = model.generate_content(prompt)
-    raw_resp = response.text.strip()
-    # Strip markdown code fences if present
-    if raw_resp.startswith("```"):
-        parts    = raw_resp.split("```")
-        raw_resp = parts[1] if len(parts) > 1 else raw_resp
-        if raw_resp.startswith("json"):
-            raw_resp = raw_resp[4:]
-    analysis   = json.loads(raw_resp)
-    leads      = analysis.get("leads", [])
-    summary_he = analysis.get("summary", "")
-    print(f"[OK] Gemini returned {len(leads)} leads")
-    print(f"[OK] Summary: {summary_he}")
-except Exception as e:
-    import traceback
-    print(f"[ERROR] Gemini analysis failed: {type(e).__name__}: {e}")
-    traceback.print_exc()
-    leads      = []
-    summary_he = "ניתוח ה-AI נכשל. ראה לוגים לפרטים."
+for attempt in range(GEMINI_RETRIES):
+    try:
+        print(f"  [INFO] Gemini attempt {attempt + 1}/{GEMINI_RETRIES}...")
+        response = model.generate_content(prompt)
+        raw_resp = response.text.strip()
+        # Strip markdown code fences if present
+        if raw_resp.startswith("```"):
+            parts    = raw_resp.split("```")
+            raw_resp = parts[1] if len(parts) > 1 else raw_resp
+            if raw_resp.startswith("json"):
+                raw_resp = raw_resp[4:]
+        analysis   = json.loads(raw_resp)
+        leads      = analysis.get("leads", [])
+        summary_he = analysis.get("summary", "")
+        print(f"[OK] Gemini returned {len(leads)} leads")
+        print(f"[OK] Summary: {summary_he}")
+        gemini_ok = True
+        break
+    except Exception as e:
+        err_str = str(e)
+        print(f"  [ERROR] Attempt {attempt + 1} failed: {type(e).__name__}: {err_str[:200]}")
+        if attempt < GEMINI_RETRIES - 1:
+            wait = GEMINI_BACKOFF[attempt]
+            print(f"  [INFO] Waiting {wait}s before retry...")
+            time.sleep(wait)
+
+if not gemini_ok:
+    print("[WARN] All Gemini attempts failed. Sending empty report.")
+    summary_he = "ניתוח ה-AI נכשל לאחר מספר ניסיונות. ראה לוגים לפרטים."
 
 # ── Stage 3: JSON Report ─────────────────────────────────────────────────────
 print("\n[STAGE 3] Generating report...")
@@ -207,7 +227,8 @@ try:
 
     leads_html = ""
     for lead in leads:
-        color = {"HIGH": "#e74c3c", "MEDIUM": "#f39c12", "LOW": "#27ae60"}.get(lead.get("priority", "LOW"), "#888")
+        color = {"HIGH": "#e74c3c", "MEDIUM": "#f39c12", "LOW": "#27ae60"}.get(
+            lead.get("priority", "LOW"), "#888")
         leads_html += f"""
         <tr>
           <td style="padding:8px;border-bottom:1px solid #eee;font-weight:bold;">{lead.get('rank','')}</td>
@@ -216,7 +237,9 @@ try:
             <small>r/{lead.get('subreddit','')} · u/{lead.get('author','')}</small>
           </td>
           <td style="padding:8px;border-bottom:1px solid #eee;text-align:center;">
-            <span style="background:{color};color:white;padding:2px 8px;border-radius:4px;font-size:12px;">{lead.get('priority','')}</span>
+            <span style="background:{color};color:white;padding:2px 8px;border-radius:4px;font-size:12px;">
+              {lead.get('priority','')}
+            </span>
           </td>
           <td style="padding:8px;border-bottom:1px solid #eee;font-size:13px;">{lead.get('reason','')}</td>
         </tr>"""
@@ -250,7 +273,8 @@ try:
         att = MIMEBase("application", "octet-stream")
         att.set_payload(f.read())
         encoders.encode_base64(att)
-        att.add_header("Content-Disposition", f"attachment; filename=delta_report_{today.replace('/','_')}.json")
+        att.add_header("Content-Disposition",
+                       f"attachment; filename=delta_report_{today.replace('/','_')}.json")
         msg.attach(att)
 
     ctx = ssl.create_default_context()
