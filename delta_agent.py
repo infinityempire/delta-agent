@@ -35,6 +35,20 @@ REDDIT_POST     = os.environ.get("REDDIT_POST", "false").lower() in {"1", "true"
 REDDIT_DM       = os.environ.get("REDDIT_DM", "false").lower() in {"1", "true", "yes", "on"}
 GOOGLE_2FA_BYPASS = os.environ.get("GOOGLE_2FA_BYPASS", "false").lower() in {"1", "true", "yes", "on"}
 
+def env_bool(name, default=False):
+    """Read a boolean environment variable with common truthy values."""
+    value = os.environ.get(name)
+    if value is None:
+        return default
+    return value.lower() in {"1", "true", "yes", "on"}
+
+def env_int(name, default):
+    """Read an integer environment variable and fall back on invalid values."""
+    try:
+        return int(os.environ.get(name, default))
+    except (TypeError, ValueError):
+        return default
+
 # ── Config ───────────────────────────────────────────────────────────────────
 SUBREDDITS     = ["entrepreneur", "startups", "smallbusiness", "forhire", "freelance"]
 POSTS_PER_SUB  = 25
@@ -45,6 +59,13 @@ REPORT_PATH    = f"{OUTPUT_DIR}/execution_report.json"
 GEMINI_MODEL   = "gemini-2.5-flash"
 GEMINI_RETRIES = 3
 GEMINI_BACKOFF = [15, 45, 90]        # seconds to wait before each retry (max 3 attempts)
+SCRAPINGBEE_RENDER_JS = env_bool("SCRAPINGBEE_RENDER_JS", True)
+SCRAPINGBEE_PREMIUM_PROXY = env_bool("SCRAPINGBEE_PREMIUM_PROXY", True)
+SCRAPINGBEE_COUNTRY_CODE = os.environ.get("SCRAPINGBEE_COUNTRY_CODE", "us")
+SCRAPINGBEE_WAIT_MS = env_int("SCRAPINGBEE_WAIT_MS", 3000)
+SCRAPERAPI_RENDER = env_bool("SCRAPERAPI_RENDER", True)
+SCRAPERAPI_PREMIUM = env_bool("SCRAPERAPI_PREMIUM", True)
+SCRAPERAPI_COUNTRY_CODE = os.environ.get("SCRAPERAPI_COUNTRY_CODE", "us")
 
 HEADERS = {
     "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
@@ -90,6 +111,10 @@ def redact_secret_text(text):
             text = text.replace(secret, "[redacted]")
     return re.sub(r"api_key=[^&\s)]+", "api_key=[redacted]", text)
 
+def bool_param(value):
+    """Return lowercase string booleans expected by scraping providers."""
+    return "true" if value else "false"
+
 def reddit_proxy_requests(reddit_url):
     """Return configured, read-only Reddit fetch attempts in preferred order."""
     attempts = []
@@ -100,7 +125,11 @@ def reddit_proxy_requests(reddit_url):
             {
                 "api_key": SCRAPINGBEE_API_KEY,
                 "url": reddit_url,
-                "render_js": "false",
+                "render_js": bool_param(SCRAPINGBEE_RENDER_JS),
+                "premium_proxy": bool_param(SCRAPINGBEE_PREMIUM_PROXY),
+                "country_code": SCRAPINGBEE_COUNTRY_CODE,
+                "wait": str(SCRAPINGBEE_WAIT_MS),
+                "block_resources": "false",
             },
         ))
     if SCRAPER_API_KEY:
@@ -110,9 +139,31 @@ def reddit_proxy_requests(reddit_url):
             {
                 "api_key": SCRAPER_API_KEY,
                 "url": reddit_url,
+                "render": bool_param(SCRAPERAPI_RENDER),
+                "premium": bool_param(SCRAPERAPI_PREMIUM),
+                "country_code": SCRAPERAPI_COUNTRY_CODE,
+                "output_format": "text",
             },
         ))
     return attempts
+
+def parse_reddit_json_response(resp):
+    """Parse Reddit JSON from direct JSON or browser-rendered text/HTML wrappers."""
+    try:
+        return resp.json()
+    except ValueError:
+        text = resp.text.strip()
+        # Browser-rendered JSON endpoints are often returned as text inside <pre>.
+        pre_match = re.search(r"<pre[^>]*>(.*?)</pre>", text, flags=re.IGNORECASE | re.DOTALL)
+        if pre_match:
+            text = pre_match.group(1)
+        text = (
+            text.replace("&quot;", '"')
+            .replace("&amp;", "&")
+            .replace("&lt;", "<")
+            .replace("&gt;", ">")
+        )
+        return json.loads(text)
 
 # ── Stage 1: Reddit Scraper ──────────────────────────────────────────────────
 print("\n[STAGE 1] Scraping Reddit via read-only proxy provider...")
@@ -130,7 +181,7 @@ for sub in SUBREDDITS:
                 print(f"  [WARN] {warning}")
                 scrape_warnings.append(warning)
                 continue
-            posts = resp.json().get("data", {}).get("children", [])
+            posts = parse_reddit_json_response(resp).get("data", {}).get("children", [])
             for p in posts:
                 d      = p.get("data", {})
                 title  = d.get("title", "").strip()
@@ -253,6 +304,17 @@ print("\n[STAGE 3] Generating report...")
 
 report = {
     "timestamp": datetime.now(timezone.utc).isoformat(),
+    "scraper_config": {
+        "scrapingbee_enabled": bool(SCRAPINGBEE_API_KEY),
+        "scrapingbee_render_js": SCRAPINGBEE_RENDER_JS,
+        "scrapingbee_premium_proxy": SCRAPINGBEE_PREMIUM_PROXY,
+        "scrapingbee_country_code": SCRAPINGBEE_COUNTRY_CODE,
+        "scrapingbee_wait_ms": SCRAPINGBEE_WAIT_MS,
+        "scraperapi_enabled": bool(SCRAPER_API_KEY),
+        "scraperapi_render": SCRAPERAPI_RENDER,
+        "scraperapi_premium": SCRAPERAPI_PREMIUM,
+        "scraperapi_country_code": SCRAPERAPI_COUNTRY_CODE
+    },
     "scan_stats": {
         "subreddits_scanned": SUBREDDITS,
         "total_posts_collected": len(raw_posts),
