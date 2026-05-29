@@ -1,6 +1,4 @@
-mkdir -p .github/workflows
-cat << 'EOF' > .github/workflows/build_apk.yml
-Name: Build Android APK
+name: Build Android APK
 
 on:
   workflow_dispatch:
@@ -15,7 +13,7 @@ on:
 
 jobs:
   build-apk:
-    name: Build APK
+    name: Build release APK
     runs-on: ubuntu-latest
     timeout-minutes: 30
 
@@ -29,21 +27,23 @@ jobs:
           distribution: temurin
           java-version: '17'
 
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Install Android packages
+        run: sdkmanager "platforms;android-35" "build-tools;35.0.0"
+
       - name: Set up Gradle
         uses: gradle/actions/setup-gradle@v4
-
-      - name: Make Gradle wrapper executable
-        run: chmod +x ./gradlew
+        with:
+          gradle-version: 8.10.2
 
       - name: Build release APK
-        run: ./gradlew assembleRelease
+        run: gradle --no-daemon assembleRelease
 
       - name: Upload APK
-        if: always()
         uses: actions/upload-artifact@v4
         with:
           name: app-release-apk
-          path: |
-            **/build/outputs/apk/**/*.apk
+          path: app/build/outputs/apk/release/*.apk
           if-no-files-found: error
-EOF
