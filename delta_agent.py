@@ -1,7 +1,7 @@
 """
 Delta Agent – Automated Lead Hunter for Tal HaTil
 ==================================================
-Stage 1: Live Reddit Scraper (via ScraperAPI)
+Stage 1: Live Reddit Scraper (via ScrapingBee/ScraperAPI fallback)
 Stage 2: Gemini AI Analysis (gemini-2.0-flash, with retry/backoff)
 Stage 3: JSON Report Generation
 Stage 4: SMTP Email Delivery
@@ -10,6 +10,7 @@ Stage 4: SMTP Email Delivery
 import os
 import sys
 import json
+import re
 import time
 import smtplib
 import ssl
@@ -28,6 +29,7 @@ SMTP_USER       = os.environ.get("SMTP_USER", "")
 SMTP_PASSWORD   = os.environ.get("SMTP_PASSWORD", "")
 SMTP_TO         = os.environ.get("SMTP_TO", "")
 SCRAPER_API_KEY = os.environ.get("SCRAPER_API_KEY", "")
+SCRAPINGBEE_API_KEY = os.environ.get("SCRAPINGBEE_API_KEY", "")
 ACTION          = os.environ.get("ACTION", os.environ.get("AGENT_GOAL", "lead_report"))
 REDDIT_POST     = os.environ.get("REDDIT_POST", "false").lower() in {"1", "true", "yes", "on"}
 REDDIT_DM       = os.environ.get("REDDIT_DM", "false").lower() in {"1", "true", "yes", "on"}
@@ -70,7 +72,8 @@ if not GEMINI_API_KEY:  missing.append("GEMINI_API_KEY")
 if not SMTP_USER:       missing.append("SMTP_USER")
 if not SMTP_PASSWORD:   missing.append("SMTP_PASSWORD")
 if not SMTP_TO:         missing.append("SMTP_TO")
-if not SCRAPER_API_KEY: missing.append("SCRAPER_API_KEY")
+if not (SCRAPINGBEE_API_KEY or SCRAPER_API_KEY):
+    missing.append("SCRAPINGBEE_API_KEY or SCRAPER_API_KEY")
 
 if missing:
     print(f"[CRITICAL] Missing environment variables: {missing}")
@@ -79,65 +82,105 @@ if missing:
 print("[OK] All required env vars present")
 os.makedirs(OUTPUT_DIR, exist_ok=True)
 
+def redact_secret_text(text):
+    """Remove API-key values from provider error messages before logging/reporting."""
+    text = str(text)
+    for secret in (SCRAPINGBEE_API_KEY, SCRAPER_API_KEY):
+        if secret:
+            text = text.replace(secret, "[redacted]")
+    return re.sub(r"api_key=[^&\s)]+", "api_key=[redacted]", text)
+
+def reddit_proxy_requests(reddit_url):
+    """Return configured, read-only Reddit fetch attempts in preferred order."""
+    attempts = []
+    if SCRAPINGBEE_API_KEY:
+        attempts.append((
+            "ScrapingBee",
+            "https://app.scrapingbee.com/api/v1/",
+            {
+                "api_key": SCRAPINGBEE_API_KEY,
+                "url": reddit_url,
+                "render_js": "false",
+            },
+        ))
+    if SCRAPER_API_KEY:
+        attempts.append((
+            "ScraperAPI",
+            "http://api.scraperapi.com",
+            {
+                "api_key": SCRAPER_API_KEY,
+                "url": reddit_url,
+            },
+        ))
+    return attempts
+
 # ── Stage 1: Reddit Scraper ──────────────────────────────────────────────────
-print("\n[STAGE 1] Scraping Reddit via ScraperAPI...")
+print("\n[STAGE 1] Scraping Reddit via read-only proxy provider...")
 
 raw_posts = []
+scrape_warnings = []
 for sub in SUBREDDITS:
     reddit_url = f"https://www.reddit.com/r/{sub}/new.json?limit={POSTS_PER_SUB}"
-    proxy_url  = (
-        f"http://api.scraperapi.com"
-        f"?api_key={SCRAPER_API_KEY}"
-        f"&url={requests.utils.quote(reddit_url, safe='')}"
-    )
-    try:
-        resp = requests.get(proxy_url, headers=HEADERS, timeout=60)
-        if resp.status_code != 200:
-            print(f"  [WARN] r/{sub}: HTTP {resp.status_code}")
-            continue
-        posts = resp.json().get("data", {}).get("children", [])
-        count = 0
-        for p in posts:
-            d      = p.get("data", {})
-            title  = d.get("title", "").strip()
-            body   = d.get("selftext", "").strip()
-            url_p  = "https://reddit.com" + d.get("permalink", "")
-            author = d.get("author", "")
-            if not title or body in ("", "[deleted]", "[removed]"):
+    count = 0
+    for provider, proxy_url, params in reddit_proxy_requests(reddit_url):
+        try:
+            resp = requests.get(proxy_url, params=params, headers=HEADERS, timeout=60)
+            if resp.status_code != 200:
+                warning = f"r/{sub} via {provider}: HTTP {resp.status_code}"
+                print(f"  [WARN] {warning}")
+                scrape_warnings.append(warning)
                 continue
-            if len(body) > MAX_BODY_CHARS:
-                body = body[:MAX_BODY_CHARS] + "..."
-            raw_posts.append({
-                "subreddit": sub, "title": title, "body": body,
-                "url": url_p, "author": author
-            })
-            count += 1
-        print(f"  [OK] r/{sub}: {count} posts collected")
-        time.sleep(1)
-    except Exception as e:
-        print(f"  [ERROR] r/{sub}: {e}")
+            posts = resp.json().get("data", {}).get("children", [])
+            for p in posts:
+                d      = p.get("data", {})
+                title  = d.get("title", "").strip()
+                body   = d.get("selftext", "").strip()
+                url_p  = "https://reddit.com" + d.get("permalink", "")
+                author = d.get("author", "")
+                if not title or body in ("", "[deleted]", "[removed]"):
+                    continue
+                if len(body) > MAX_BODY_CHARS:
+                    body = body[:MAX_BODY_CHARS] + "..."
+                raw_posts.append({
+                    "subreddit": sub, "title": title, "body": body,
+                    "url": url_p, "author": author
+                })
+                count += 1
+            print(f"  [OK] r/{sub}: {count} posts collected via {provider}")
+            break
+        except Exception as e:
+            warning = redact_secret_text(f"r/{sub} via {provider}: {type(e).__name__}: {e}")
+            print(f"  [ERROR] {warning}")
+            scrape_warnings.append(warning)
+    if count == 0:
+        scrape_warnings.append(f"r/{sub}: no posts collected from configured providers")
+    time.sleep(1)
 
 print(f"\n[STAGE 1] Total posts collected: {len(raw_posts)}")
 
 if not raw_posts:
-    print("[CRITICAL] No posts collected. Exiting.")
-    sys.exit(1)
+    print("[WARN] No posts collected. Continuing with an empty intelligence report instead of failing the workflow.")
 
 # ── Stage 2: Gemini AI Analysis (with retry/backoff) ─────────────────────────
-print(f"\n[STAGE 2] Analyzing with Gemini AI ({GEMINI_MODEL})...")
+leads      = []
+summary_he = "לא נאספו פוסטים בסריקה הנוכחית. ראה אזהרות בדוח הביצוע."
+gemini_ok  = False
 
-posts_text = ""
-for i, p in enumerate(raw_posts):
-    posts_text += (
-        f"\n--- Post {i+1} ---\n"
-        f"Subreddit: r/{p['subreddit']}\n"
-        f"Title: {p['title']}\n"
-        f"Body: {p['body']}\n"
-        f"URL: {p['url']}\n"
-        f"Author: {p['author']}\n"
-    )
+if raw_posts:
+    print(f"\n[STAGE 2] Analyzing with Gemini AI ({GEMINI_MODEL})...")
 
-prompt = f"""You are an expert sales analyst for a digital marketing and automation agency.
+    posts_text = ""
+    for i, p in enumerate(raw_posts):
+        posts_text += (
+            f"\n--- Post {i+1} ---\n"
+            f"Subreddit: r/{p['subreddit']}\n"
+            f"Title: {p['title']}\n"
+            f"Body: {p['body']}\n"
+            f"URL: {p['url']}\n"
+            f"Author: {p['author']}\n"
+        )
+
+    prompt = f"""You are an expert sales analyst for a digital marketing and automation agency.
 Your client, Tal HaTil, sells 40 courses and services in web development, marketing automation, and lead generation.
 
 Analyze the following {len(raw_posts)} Reddit posts and identify the TOP {TOP_LEADS} best potential leads.
@@ -168,42 +211,42 @@ Priority levels: HIGH (score 8-10), MEDIUM (score 5-7), LOW (score 1-4)
 POSTS TO ANALYZE:
 {posts_text}"""
 
-from google import genai as genai_new
-_gclient = genai_new.Client(api_key=GEMINI_API_KEY)
+    from google import genai as genai_new
+    _gclient = genai_new.Client(api_key=GEMINI_API_KEY)
 
-leads      = []
-summary_he = "ניתוח ה-AI לא הצליח להשלים."
-gemini_ok  = False
+    summary_he = "ניתוח ה-AI לא הצליח להשלים."
 
-for attempt in range(GEMINI_RETRIES):
-    try:
-        print(f"  [INFO] Gemini attempt {attempt + 1}/{GEMINI_RETRIES}...")
-        response = _gclient.models.generate_content(model=GEMINI_MODEL, contents=prompt)
-        raw_resp = response.text.strip()
-        # Strip markdown code fences if present
-        if raw_resp.startswith("```"):
-            parts    = raw_resp.split("```")
-            raw_resp = parts[1] if len(parts) > 1 else raw_resp
-            if raw_resp.startswith("json"):
-                raw_resp = raw_resp[4:]
-        analysis   = json.loads(raw_resp)
-        leads      = analysis.get("leads", [])
-        summary_he = analysis.get("summary", "")
-        print(f"[OK] Gemini returned {len(leads)} leads")
-        print(f"[OK] Summary: {summary_he}")
-        gemini_ok = True
-        break
-    except Exception as e:
-        err_str = str(e)
-        print(f"  [ERROR] Attempt {attempt + 1} failed: {type(e).__name__}: {err_str[:200]}")
-        if attempt < GEMINI_RETRIES - 1:
-            wait = GEMINI_BACKOFF[attempt]
-            print(f"  [INFO] Waiting {wait}s before retry...")
-            time.sleep(wait)
+    for attempt in range(GEMINI_RETRIES):
+        try:
+            print(f"  [INFO] Gemini attempt {attempt + 1}/{GEMINI_RETRIES}...")
+            response = _gclient.models.generate_content(model=GEMINI_MODEL, contents=prompt)
+            raw_resp = response.text.strip()
+            # Strip markdown code fences if present
+            if raw_resp.startswith("```"):
+                parts    = raw_resp.split("```")
+                raw_resp = parts[1] if len(parts) > 1 else raw_resp
+                if raw_resp.startswith("json"):
+                    raw_resp = raw_resp[4:]
+            analysis   = json.loads(raw_resp)
+            leads      = analysis.get("leads", [])
+            summary_he = analysis.get("summary", "")
+            print(f"[OK] Gemini returned {len(leads)} leads")
+            print(f"[OK] Summary: {summary_he}")
+            gemini_ok = True
+            break
+        except Exception as e:
+            err_str = str(e)
+            print(f"  [ERROR] Attempt {attempt + 1} failed: {type(e).__name__}: {err_str[:200]}")
+            if attempt < GEMINI_RETRIES - 1:
+                wait = GEMINI_BACKOFF[attempt]
+                print(f"  [INFO] Waiting {wait}s before retry...")
+                time.sleep(wait)
 
-if not gemini_ok:
-    print("[WARN] All Gemini attempts failed. Sending empty report.")
-    summary_he = "ניתוח ה-AI נכשל לאחר מספר ניסיונות. ראה לוגים לפרטים."
+    if not gemini_ok:
+        print("[WARN] All Gemini attempts failed. Sending empty report.")
+        summary_he = "ניתוח ה-AI נכשל לאחר מספר ניסיונות. ראה לוגים לפרטים."
+else:
+    print("\n[STAGE 2] Skipping Gemini analysis because no Reddit posts were collected.")
 
 # ── Stage 3: JSON Report ─────────────────────────────────────────────────────
 print("\n[STAGE 3] Generating report...")
@@ -213,7 +256,8 @@ report = {
     "scan_stats": {
         "subreddits_scanned": SUBREDDITS,
         "total_posts_collected": len(raw_posts),
-        "leads_identified": len(leads)
+        "leads_identified": len(leads),
+        "scrape_warnings": scrape_warnings
     },
     "requested_action": ACTION,
     "compliance_safeguards": {
