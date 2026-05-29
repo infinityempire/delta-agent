@@ -28,6 +28,10 @@ SMTP_USER       = os.environ.get("SMTP_USER", "")
 SMTP_PASSWORD   = os.environ.get("SMTP_PASSWORD", "")
 SMTP_TO         = os.environ.get("SMTP_TO", "")
 SCRAPER_API_KEY = os.environ.get("SCRAPER_API_KEY", "")
+ACTION          = os.environ.get("ACTION", os.environ.get("AGENT_GOAL", "lead_report"))
+REDDIT_POST     = os.environ.get("REDDIT_POST", "false").lower() in {"1", "true", "yes", "on"}
+REDDIT_DM       = os.environ.get("REDDIT_DM", "false").lower() in {"1", "true", "yes", "on"}
+GOOGLE_2FA_BYPASS = os.environ.get("GOOGLE_2FA_BYPASS", "false").lower() in {"1", "true", "yes", "on"}
 
 # ── Config ───────────────────────────────────────────────────────────────────
 SUBREDDITS     = ["entrepreneur", "startups", "smallbusiness", "forhire", "freelance"]
@@ -53,7 +57,13 @@ print("=" * 60)
 print("DELTA AGENT – Starting Up")
 print(f"Timestamp : {datetime.now(timezone.utc).isoformat()}")
 print(f"Model     : {GEMINI_MODEL}")
+print(f"Action    : {ACTION}")
 print("=" * 60)
+
+if GOOGLE_2FA_BYPASS:
+    print("[POLICY] google_2fa_bypass was requested, but 2FA bypass and OTP extraction are not supported.")
+if REDDIT_POST or REDDIT_DM:
+    print("[POLICY] Automated Reddit posting/DMs are disabled; Delta will generate a human-reviewable lead report only.")
 
 missing = []
 if not GEMINI_API_KEY:  missing.append("GEMINI_API_KEY")
@@ -205,6 +215,16 @@ report = {
         "total_posts_collected": len(raw_posts),
         "leads_identified": len(leads)
     },
+    "requested_action": ACTION,
+    "compliance_safeguards": {
+        "google_2fa_bypass_requested": GOOGLE_2FA_BYPASS,
+        "google_2fa_bypass_performed": False,
+        "reddit_post_requested": REDDIT_POST,
+        "reddit_post_performed": False,
+        "reddit_dm_requested": REDDIT_DM,
+        "reddit_dm_performed": False,
+        "note": "Delta only generates lead intelligence reports; authentication bypass, automated DMs, and automated promotional posts are disabled."
+    },
     "ai_summary": summary_he,
     "leads": leads
 }
@@ -249,6 +269,9 @@ try:
       <p style="color:#7f8c8d;">{today} | {datetime.now(timezone.utc).strftime('%H:%M')} UTC</p>
       <div style="background:#ecf0f1;padding:15px;border-radius:8px;margin-bottom:20px;">
         <strong>סיכום:</strong> {summary_he}
+      </div>
+      <div style="background:#fff8e1;padding:12px;border-radius:8px;margin-bottom:20px;color:#795548;">
+        <strong>מדיניות הפעלה:</strong> הדוח כולל מודיעין לידים בלבד. עקיפת 2FA, שליחת DMs אוטומטית ופרסום שיווקי אוטומטי אינם מבוצעים.
       </div>
       <table style="width:100%;border-collapse:collapse;direction:ltr;text-align:left;">
         <thead>

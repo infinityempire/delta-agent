@@ -9,6 +9,22 @@ on:
         description: 'Optional: Override the agent goal (leave blank for default)'
         required: false
         default: ''
+      action:
+        description: 'Delta action mode for orchestrator compatibility'
+        required: false
+        default: 'lead_report'
+      reddit_post:
+        description: 'Request Reddit post drafting/reporting only; automated posting is disabled'
+        required: false
+        default: 'false'
+      reddit_dm:
+        description: 'Request Reddit DM drafting/reporting only; automated DMs are disabled'
+        required: false
+        default: 'false'
+      google_2fa_bypass:
+        description: 'Compatibility flag only; Google 2FA bypass is never performed'
+        required: false
+        default: 'false'
 
 jobs:
   run-delta:
@@ -40,6 +56,10 @@ jobs:
           SMTP_TO: ${{ secrets.SMTP_TO }}
           SCRAPER_API_KEY: ${{ secrets.SCRAPER_API_KEY }}
           AGENT_GOAL: ${{ github.event.inputs.goal }}
+          ACTION: ${{ github.event.inputs.action }}
+          REDDIT_POST: ${{ github.event.inputs.reddit_post }}
+          REDDIT_DM: ${{ github.event.inputs.reddit_dm }}
+          GOOGLE_2FA_BYPASS: ${{ github.event.inputs.google_2fa_bypass }}
         run: |
           python3 delta_agent.py
 
