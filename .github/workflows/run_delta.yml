@@ -1,0 +1,52 @@
+name: Run Delta Agent
+
+on:
+  schedule:
+    - cron: '0 5 * * *'   # Every day at 08:00 Israel time (05:00 UTC)
+  workflow_dispatch:
+    inputs:
+      goal:
+        description: 'Optional: Override the agent goal (leave blank for default)'
+        required: false
+        default: ''
+
+jobs:
+  run-delta:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        run: |
+          pip install --upgrade pip
+          pip install google-genai requests
+
+      - name: Run Delta Agent
+        env:
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          SMTP_HOST: ${{ secrets.SMTP_HOST }}
+          SMTP_PORT: ${{ secrets.SMTP_PORT }}
+          SMTP_USE_SSL: ${{ secrets.SMTP_USE_SSL }}
+          SMTP_USER: ${{ secrets.SMTP_USER }}
+          SMTP_PASSWORD: ${{ secrets.SMTP_PASSWORD }}
+          SMTP_TO: ${{ secrets.SMTP_TO }}
+          SCRAPER_API_KEY: ${{ secrets.SCRAPER_API_KEY }}
+          AGENT_GOAL: ${{ github.event.inputs.goal }}
+        run: |
+          python3 delta_agent.py
+
+      - name: Upload execution report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: delta-execution-report
+          path: output/
+          if-no-files-found: warn

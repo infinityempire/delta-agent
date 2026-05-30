@@ -26,3 +26,7 @@ The included workflow (`Deploy Pages PWA bundle`) validates that the critical fi
 - Update icons inside `public/` to reflect your branding. Keep both PNG sizes and the SVG for splash and favicon support.
 - Extend the service worker in `public/sw.js` if you need additional offline routes. The `BASE_PATH` constant centralises the scoped path for convenience.
 - Place future application code beneath `src/` and adjust the build tooling to emit the static artefacts back into `public/` before deployment.
+
+---
+
+# Triggering fresh deploy

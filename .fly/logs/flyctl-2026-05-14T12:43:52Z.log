@@ -1,0 +1,48 @@
+DEBUG Loaded flyctl config from/home/.fly/config.yml
+DEBUG determined hostname: "localhost"
+DEBUG determined working directory: "/home"
+DEBUG determined config directory: "/home/.fly"
+DEBUG ensured config directory exists.
+DEBUG ensured config directory perms.
+DEBUG cache loaded.
+DEBUG config initialized.
+DEBUG started querying for new release
+DEBUG checking for updates...
+DEBUG started querying for statuspage incidents
+DEBUG client initialized.
+DEBUG no app config found at /home/fly.toml; skipped.
+DEBUG no app config found at /home/fly.json; skipped.
+DEBUG no app config found at /home/fly.yaml; skipped.
+DEBUG started querying for host issues
+DEBUG no app config found at /home/fly.toml; skipped.
+DEBUG no app config found at /home/fly.json; skipped.
+DEBUG no app config found at /home/fly.yaml; skipped.
+DEBUG Starting task manager
+DEBUG monitoring tokens in memory
+DEBUG --> POST https://api.fly.io/graphql
+
+DEBUG {
+  "query": "query($appName: String!) { apphostissues:app(name: $appName) { hostIssues { nodes { internalId message createdAt updatedAt } } } }",
+  "variables": {
+    "appName": "delta-agent"
+  }
+}
+
+
+DEBUG {}
+DEBUG --> POST https://api.fly.io/graphql
+
+DEBUG {
+  "query": "query ($appName: String!) { appcompact:app(name: $appName) { id internalNumericId name hostname cnameTarget deployed network status appUrl platformVersion organization { id internalNumericId slug paidPlan } postgresAppRole: role { name } } }",
+  "variables": {
+    "appName": "delta-agent"
+  }
+}
+
+
+DEBUG {}
+DEBUG failed querying for Statuspage incidents: Get "https://incidents.flyio.net/v1/incidents": tls: failed to verify certificate: x509: certificate signed by unknown authority
+DEBUG failed querying for host issues: failed to run query($appName: String!) { apphostissues:app(name: $appName) { hostIssues { nodes { internalId message createdAt updatedAt } } } }: Post "https://api.fly.io/graphql": net/http: request canceled
+DEBUG Task manager done
+DEBUG done monitoring tokens
+DEBUG querying for host issues resulted to []

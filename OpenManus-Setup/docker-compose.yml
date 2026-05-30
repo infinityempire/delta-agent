@@ -1,0 +1,27 @@
+version: '3.8'
+
+services:
+  openmanus:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: openmanus-agent
+    environment:
+      - PYTHONUNBUFFERED=1
+      - LLM_API_KEY=${LLM_API_KEY}
+      - LLM_MODEL=${LLM_MODEL:-claude-3-7-sonnet-20250219}
+      - LLM_BASE_URL=${LLM_BASE_URL:-https://api.anthropic.com/v1/}
+    volumes:
+      - ./config:/workspace/config
+      - ./workspace:/workspace/workspace
+      - ./outputs:/workspace/outputs
+    ports:
+      - "8000:8000"
+    stdin_open: true
+    tty: true
+    networks:
+      - openmanus-network
+
+networks:
+  openmanus-network:
+    driver: bridge

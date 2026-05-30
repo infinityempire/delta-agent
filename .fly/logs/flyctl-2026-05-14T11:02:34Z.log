@@ -1,0 +1,18 @@
+DEBUG Loaded flyctl config from/home/.fly/config.yml
+DEBUG determined hostname: "localhost"
+DEBUG determined working directory: "/home"
+DEBUG determined config directory: "/home/.fly"
+DEBUG ensured config directory exists.
+DEBUG ensured config directory perms.
+DEBUG cache loaded.
+DEBUG config initialized.
+DEBUG started querying for new release
+DEBUG checking for updates...
+DEBUG started querying for statuspage incidents
+DEBUG client initialized.
+DEBUG no app config found at /home/fly.toml; skipped.
+DEBUG no app config found at /home/fly.json; skipped.
+DEBUG no app config found at /home/fly.yaml; skipped.
+DEBUG Starting task manager
+DEBUG failed querying for Statuspage incidents: Get "https://incidents.flyio.net/v1/incidents": tls: failed to verify certificate: x509: certificate signed by unknown authority
+DEBUG Task manager done

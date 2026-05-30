@@ -1,0 +1,153 @@
+# OpenManus Configuration Template
+# Copy this file to config/config.toml and customize for your setup
+
+# ============================================
+# GLOBAL LLM CONFIGURATION (Required)
+# ============================================
+
+[llm]
+model = "claude-3-7-sonnet-20250219"       # LLM model to use
+base_url = "https://api.anthropic.com/v1/" # API endpoint URL
+api_key = "YOUR_API_KEY"                   # Replace with your actual API key
+max_tokens = 8192                          # Maximum tokens in response
+temperature = 0.0                          # Controls randomness (0.0 = deterministic)
+
+# ============================================
+# LLM VISION CONFIGURATION (Optional)
+# ============================================
+
+[llm.vision]
+model = "claude-3-7-sonnet-20250219"
+base_url = "https://api.anthropic.com/v1/"
+api_key = "YOUR_API_KEY"
+max_tokens = 8192
+temperature = 0.0
+
+# ============================================
+# ALTERNATIVE LLM PROVIDERS
+# ============================================
+
+# --- OpenAI Configuration ---
+# [llm]
+# model = "gpt-4o"
+# base_url = "https://api.openai.com/v1"
+# api_key = "sk-..."
+# max_tokens = 4096
+# temperature = 0.0
+
+# --- Azure OpenAI Configuration ---
+# [llm]
+# api_type = "azure"
+# model = "gpt-4o-mini"
+# base_url = "{YOUR_AZURE_ENDPOINT}/openai/deployments/{DEPLOYMENT_ID}"
+# api_key = "YOUR_AZURE_API_KEY"
+# max_tokens = 8096
+# temperature = 0.0
+# api_version = "2024-08-01-preview"
+
+# --- OLLAMA (Local) Configuration ---
+# [llm]
+# api_type = "ollama"
+# model = "llama3.2"
+# base_url = "http://localhost:11434/v1"
+# api_key = "ollama"
+# max_tokens = 4096
+# temperature = 0.0
+
+# --- AWS Bedrock Configuration ---
+# [llm]
+# api_type = "aws"
+# model = "us.anthropic.claude-3-7-sonnet-20250219-v1:0"
+# base_url = "bedrock-runtime.us-west-2.amazonaws.com"
+# max_tokens = 8192
+# temperature = 1.0
+# api_key = "required_but_not_used_for_bedrock"
+
+# --- Jiekou.AI Configuration ---
+# [llm]
+# api_type = "jiekou"
+# model = "claude-sonnet-4-5-20250929"
+# base_url = "https://api.jiekou.ai/openai"
+# api_key = "your_jiekou_api_key"
+# max_tokens = 64000
+# temperature = 0.0
+
+# ============================================
+# BROWSER CONFIGURATION (Optional)
+# ============================================
+
+# [browser]
+# Whether to run browser in headless mode
+# headless = false
+# Disable browser security features
+# disable_security = true
+# Extra arguments to pass to the browser
+# extra_chromium_args = []
+# Path to Chrome instance
+# chrome_instance_path = "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"
+# Connect to browser via WebSocket
+# wss_url = ""
+# Connect to browser via CDP
+# cdp_url = ""
+
+# [browser.proxy]
+# server = "http://proxy-server:port"
+# username = "proxy-username"
+# password = "proxy-password"
+
+# ============================================
+# SEARCH CONFIGURATION (Optional)
+# ============================================
+
+# [search]
+# Search engine: "Google", "Baidu", "DuckDuckGo", "Bing"
+# engine = "Google"
+# Fallback engines in order
+# fallback_engines = ["DuckDuckGo", "Baidu", "Bing"]
+# Retry delay in seconds
+# retry_delay = 60
+# Maximum retries
+# max_retries = 3
+# Language code: "en", "zh", etc.
+# lang = "en"
+# Country code: "us", "cn", etc.
+# country = "us"
+
+# ============================================
+# SANDBOX CONFIGURATION (Optional)
+# ============================================
+
+# [sandbox]
+# use_sandbox = false
+# image = "python:3.12-slim"
+# work_dir = "/workspace"
+# memory_limit = "1g"
+# cpu_limit = 2.0
+# timeout = 300
+# network_enabled = true
+
+# ============================================
+# DAYTONA SANDBOX CONFIGURATION (Optional)
+# ============================================
+
+# [daytona]
+# daytona_api_key = ""
+# daytona_server_url = "https://app.daytona.io/api"
+# daytona_target = "us"  # "us" or "eu"
+# sandbox_image_name = "whitezxj/sandbox:0.1.0"
+# sandbox_entrypoint = "/usr/bin/supervisord -n -c /etc/supervisor/conf.d/supervisord.conf"
+# VNC_password = "123456"
+
+# ============================================
+# MCP (Model Context Protocol) Configuration
+# ============================================
+
+[mcp]
+server_reference = "app.mcp.server"
+
+# ============================================
+# RUNFLOW CONFIGURATION (Optional)
+# ============================================
+
+# [runflow]
+# use_data_analysis_agent = false
