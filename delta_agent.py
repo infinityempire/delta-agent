@@ -1,8 +1,8 @@
 """
 Delta Agent – Automated Lead Hunter for Tal HaTil
 ==================================================
-Stage 1: Live Reddit Scraper (via ScraperAPI)
-Stage 2: Gemini AI Analysis (gemini-2.0-flash, with retry/backoff)
+Stage 1: Live Reddit Scraper (ScrapingBee → ScraperAPI → Reddit RSS)
+Stage 2: Gemini AI Analysis (gemini-2.5-flash, with retry/backoff)
 Stage 3: JSON Report Generation
 Stage 4: SMTP Email Delivery
 """
@@ -13,6 +13,8 @@ import json
 import time
 import smtplib
 import ssl
+import html
+import xml.etree.ElementTree as ET
 import requests
 from datetime import datetime, timezone
 from email.mime.text import MIMEText
@@ -27,7 +29,8 @@ SMTP_PORT       = int(os.environ.get("SMTP_PORT", "465"))
 SMTP_USER       = os.environ.get("SMTP_USER", "")
 SMTP_PASSWORD   = os.environ.get("SMTP_PASSWORD", "")
 SMTP_TO         = os.environ.get("SMTP_TO", "")
-SCRAPER_API_KEY = os.environ.get("SCRAPER_API_KEY", "")
+SCRAPER_API_KEY     = os.environ.get("SCRAPER_API_KEY", "")
+SCRAPINGBEE_API_KEY = os.environ.get("SCRAPINGBEE_API_KEY", "")
 
 # ── Config ───────────────────────────────────────────────────────────────────
 SUBREDDITS     = ["entrepreneur", "startups", "smallbusiness", "forhire", "freelance"]
@@ -60,52 +63,136 @@ if not GEMINI_API_KEY:  missing.append("GEMINI_API_KEY")
 if not SMTP_USER:       missing.append("SMTP_USER")
 if not SMTP_PASSWORD:   missing.append("SMTP_PASSWORD")
 if not SMTP_TO:         missing.append("SMTP_TO")
-if not SCRAPER_API_KEY: missing.append("SCRAPER_API_KEY")
-
 if missing:
     print(f"[CRITICAL] Missing environment variables: {missing}")
     sys.exit(1)
 
 print("[OK] All required env vars present")
+if not SCRAPINGBEE_API_KEY:
+    print("[WARN] SCRAPINGBEE_API_KEY not set. ScraperAPI will be used as the first proxy fallback.")
+if not SCRAPER_API_KEY:
+    print("[WARN] SCRAPER_API_KEY not set. Reddit RSS will be used if ScrapingBee is unavailable.")
 os.makedirs(OUTPUT_DIR, exist_ok=True)
 
 # ── Stage 1: Reddit Scraper ──────────────────────────────────────────────────
-print("\n[STAGE 1] Scraping Reddit via ScraperAPI...")
+print("\n[STAGE 1] Scraping Reddit via ScrapingBee → ScraperAPI → Reddit RSS...")
 
-raw_posts = []
-for sub in SUBREDDITS:
-    reddit_url = f"https://www.reddit.com/r/{sub}/new.json?limit={POSTS_PER_SUB}"
-    proxy_url  = (
+def _normalize_post(subreddit, title, body, url, author=""):
+    title = (title or "").strip()
+    body = (body or "").strip()
+    if not title or body in ("", "[deleted]", "[removed]"):
+        return None
+    if len(body) > MAX_BODY_CHARS:
+        body = body[:MAX_BODY_CHARS] + "..."
+    return {
+        "subreddit": subreddit,
+        "title": title,
+        "body": body,
+        "url": url,
+        "author": author or "",
+    }
+
+
+def _posts_from_reddit_json(subreddit, payload):
+    posts = []
+    for p in payload.get("data", {}).get("children", []):
+        d = p.get("data", {})
+        normalized = _normalize_post(
+            subreddit=subreddit,
+            title=d.get("title", ""),
+            body=d.get("selftext", ""),
+            url="https://reddit.com" + d.get("permalink", ""),
+            author=d.get("author", ""),
+        )
+        if normalized:
+            posts.append(normalized)
+    return posts
+
+
+def _fetch_with_scrapingbee(subreddit):
+    if not SCRAPINGBEE_API_KEY:
+        return []
+    reddit_url = f"https://www.reddit.com/r/{subreddit}/new.json?limit={POSTS_PER_SUB}"
+    resp = requests.get(
+        "https://app.scrapingbee.com/api/v1/",
+        params={
+            "api_key": SCRAPINGBEE_API_KEY,
+            "url": reddit_url,
+            "render_js": "false",
+        },
+        headers=HEADERS,
+        timeout=60,
+    )
+    if resp.status_code != 200:
+        print(f"  [WARN] r/{subreddit}: ScrapingBee HTTP {resp.status_code}")
+        return []
+    return _posts_from_reddit_json(subreddit, resp.json())
+
+
+def _fetch_with_scraperapi(subreddit):
+    if not SCRAPER_API_KEY:
+        return []
+    reddit_url = f"https://www.reddit.com/r/{subreddit}/new.json?limit={POSTS_PER_SUB}"
+    proxy_url = (
         f"http://api.scraperapi.com"
         f"?api_key={SCRAPER_API_KEY}"
         f"&url={requests.utils.quote(reddit_url, safe='')}"
     )
-    try:
-        resp = requests.get(proxy_url, headers=HEADERS, timeout=60)
-        if resp.status_code != 200:
-            print(f"  [WARN] r/{sub}: HTTP {resp.status_code}")
-            continue
-        posts = resp.json().get("data", {}).get("children", [])
-        count = 0
-        for p in posts:
-            d      = p.get("data", {})
-            title  = d.get("title", "").strip()
-            body   = d.get("selftext", "").strip()
-            url_p  = "https://reddit.com" + d.get("permalink", "")
-            author = d.get("author", "")
-            if not title or body in ("", "[deleted]", "[removed]"):
-                continue
-            if len(body) > MAX_BODY_CHARS:
-                body = body[:MAX_BODY_CHARS] + "..."
-            raw_posts.append({
-                "subreddit": sub, "title": title, "body": body,
-                "url": url_p, "author": author
-            })
-            count += 1
-        print(f"  [OK] r/{sub}: {count} posts collected")
-        time.sleep(1)
-    except Exception as e:
-        print(f"  [ERROR] r/{sub}: {e}")
+    resp = requests.get(proxy_url, headers=HEADERS, timeout=60)
+    if resp.status_code != 200:
+        print(f"  [WARN] r/{subreddit}: ScraperAPI HTTP {resp.status_code}")
+        return []
+    return _posts_from_reddit_json(subreddit, resp.json())
+
+
+def _fetch_with_reddit_rss(subreddit):
+    rss_url = f"https://www.reddit.com/r/{subreddit}/new/.rss?limit={POSTS_PER_SUB}"
+    resp = requests.get(rss_url, headers=HEADERS, timeout=60)
+    if resp.status_code != 200:
+        print(f"  [WARN] r/{subreddit}: Reddit RSS HTTP {resp.status_code}")
+        return []
+
+    root = ET.fromstring(resp.content)
+    ns = {"atom": "http://www.w3.org/2005/Atom"}
+    posts = []
+    for entry in root.findall("atom:entry", ns):
+        title = entry.findtext("atom:title", default="", namespaces=ns)
+        body = entry.findtext("atom:content", default="", namespaces=ns)
+        author = entry.findtext("atom:author/atom:name", default="", namespaces=ns)
+        link = entry.find("atom:link", ns)
+        url = link.get("href", "") if link is not None else ""
+        normalized = _normalize_post(
+            subreddit=subreddit,
+            title=html.unescape(title),
+            body=html.unescape(body),
+            url=url,
+            author=author,
+        )
+        if normalized:
+            posts.append(normalized)
+    return posts
+
+
+raw_posts = []
+for sub in SUBREDDITS:
+    providers = (
+        ("ScrapingBee", _fetch_with_scrapingbee),
+        ("ScraperAPI", _fetch_with_scraperapi),
+        ("Reddit RSS", _fetch_with_reddit_rss),
+    )
+    collected = []
+    for provider_name, fetch_posts in providers:
+        try:
+            collected = fetch_posts(sub)
+            if collected:
+                raw_posts.extend(collected)
+                print(f"  [OK] r/{sub}: {len(collected)} posts collected via {provider_name}")
+                break
+        except Exception as e:
+            print(f"  [WARN] r/{sub}: {provider_name} failed: {e}")
+    if not collected:
+        print(f"  [ERROR] r/{sub}: all scraping providers failed")
+    time.sleep(1)
 
 print(f"\n[STAGE 1] Total posts collected: {len(raw_posts)}")
 
@@ -127,33 +214,58 @@ for i, p in enumerate(raw_posts):
         f"Author: {p['author']}\n"
     )
 
-prompt = f"""You are an expert sales analyst for a digital marketing and automation agency.
-Your client, Tal HaTil, sells 40 courses and services in web development, marketing automation, and lead generation.
+prompt = f"""You are Delta's compliance-first Reddit market intelligence analyst.
+Your only offer is the high-ticket service named: Reddit Intent Intelligence Sprint.
 
-Analyze the following {len(raw_posts)} Reddit posts and identify the TOP {TOP_LEADS} best potential leads.
-A good lead is someone who:
-- Needs help with: website building, digital marketing, automation, lead generation, online business growth
-- Is actively asking for help or expressing frustration with their current situation
-- Seems like a business owner, entrepreneur, or freelancer (not a student doing homework)
+MISSION
+Analyze the following {len(raw_posts)} Reddit posts and produce a single, executive-ready markdown report for Reddit Intent Intelligence Sprint.
+Prioritize posts showing strong buying intent, urgent pain, operational friction, repeated industry frustration, or founder/operator willingness to pay for expertise.
 
-Return a JSON object with this exact structure (no markdown, no explanation outside the JSON):
-{{
-  "leads": [
-    {{
-      "rank": 1,
-      "subreddit": "subreddit_name",
-      "title": "post title",
-      "url": "https://reddit.com/...",
-      "author": "username",
-      "score": 8,
-      "priority": "HIGH",
-      "reason": "One sentence explaining why this is a good lead"
-    }}
-  ],
-  "summary": "2-3 sentence summary of today's scan results in Hebrew"
-}}
+COMPLIANCE BOUNDARY
+- Absolutely NO automated outreach instructions.
+- Do NOT recommend auto-DMs, bot posting, automated replies, scripted mass commenting, scraping-to-message workflows, or any other automated engagement.
+- Every action item MUST be explicitly labeled exactly as: Reddit Pro Manual Step.
+- Do not include tactical engagement guidance under any other label.
+- Focus 100% on value-driven authority building inside Reddit communities.
+- Never draft aggressive sales pitches, pressure-based CTAs, spam, link drops, fake scarcity, or manipulative language.
+- Draft replies must be insightful, non-salesy comments that solve part of the user's problem and build brand authority.
+- Draft replies must contain no links, no promotional claims, and no request to DM.
 
-Priority levels: HIGH (score 8-10), MEDIUM (score 5-7), LOW (score 1-4)
+OUTPUT RULES
+- Return ONLY markdown.
+- Do NOT return JSON.
+- Follow the report structure below exactly.
+- Preserve the exact section headings and required labels shown in REPORT FORMAT.
+- Use the source subreddit and post title from the raw Reddit data.
+- Include up to {TOP_LEADS} strongest high-intent signals in section 2.
+- Include one strongest trending debate or discussion angle in section 3.
+- The Executive Action Items section must include a numeric count for Total Intent Opportunities Captured.
+
+REPORT FORMAT
+# 📊 Reddit Intent Intelligence Sprint Report
+**Target Market Analyzer:** [Identify the core niche from data]
+**Compliance Status:** 100% Secure (Manual Action Only)
+---
+### 1. 🔥 The Pain Map
+* **Core Trigger:** [Analyze the raw data to extract core triggers and industry frustrations]
+* **Emotional Hook & Scale:** [Emotional triggers of users]
+---
+### 2. 🎯 High-Intent Signals
+> **Subreddit:** r/[Name] | **Post Title:** "[Title]"
+> - **The Signal:** [Why this user is a high-value lead]
+> - **Reddit Pro Manual Step:** [Action item for human using Reddit Pro features]
+> - **Value-First Draft Reply (Ready for Review):**
+>   > "[Draft a deeply insightful, non-salesy comment that solves a piece of their problem and builds instant brand authority. No links, no spam.]"
+---
+### 3. 📈 Hot Discussion Angle
+> **Subreddit:** r/[Name] | **Post Title:** "[Title]"
+> - **The Angle:** [What the debate is about and why it's trending]
+> - **Reddit Pro Manual Step:** [How a human should enter the comment section to build organic authority]
+---
+### 4. 🛠️ Executive Action Items
+- **Total Intent Opportunities Captured:** [Count]
+- **Recommended Strategy:** Have your representative spend exactly 15 minutes manually applying the value-first drafts to build organic pipeline.
+- **Safe Boundary Check:** Verified. 0 automated actions suggested. Brand reputation fully protected.
 
 POSTS TO ANALYZE:
 {posts_text}"""
@@ -161,26 +273,23 @@ POSTS TO ANALYZE:
 from google import genai as genai_new
 _gclient = genai_new.Client(api_key=GEMINI_API_KEY)
 
-leads      = []
-summary_he = "ניתוח ה-AI לא הצליח להשלים."
-gemini_ok  = False
+leads            = []
+sprint_report_md = "ניתוח ה-AI לא הצליח להשלים."
+gemini_ok        = False
 
 for attempt in range(GEMINI_RETRIES):
     try:
         print(f"  [INFO] Gemini attempt {attempt + 1}/{GEMINI_RETRIES}...")
         response = _gclient.models.generate_content(model=GEMINI_MODEL, contents=prompt)
-        raw_resp = response.text.strip()
-        # Strip markdown code fences if present
-        if raw_resp.startswith("```"):
-            parts    = raw_resp.split("```")
-            raw_resp = parts[1] if len(parts) > 1 else raw_resp
-            if raw_resp.startswith("json"):
-                raw_resp = raw_resp[4:]
-        analysis   = json.loads(raw_resp)
-        leads      = analysis.get("leads", [])
-        summary_he = analysis.get("summary", "")
-        print(f"[OK] Gemini returned {len(leads)} leads")
-        print(f"[OK] Summary: {summary_he}")
+        sprint_report_md = response.text.strip()
+        if not sprint_report_md.startswith("# 📊 Reddit Intent Intelligence Sprint Report"):
+            raise ValueError("Gemini response did not match the required sprint report markdown format")
+        high_intent_section = sprint_report_md.split("### 3. 📈 Hot Discussion Angle", 1)[0]
+        leads = [
+            line for line in high_intent_section.splitlines()
+            if line.startswith("> **Subreddit:**")
+        ]
+        print(f"[OK] Gemini returned sprint report with {len(leads)} intent opportunities")
         gemini_ok = True
         break
     except Exception as e:
@@ -193,7 +302,7 @@ for attempt in range(GEMINI_RETRIES):
 
 if not gemini_ok:
     print("[WARN] All Gemini attempts failed. Sending empty report.")
-    summary_he = "ניתוח ה-AI נכשל לאחר מספר ניסיונות. ראה לוגים לפרטים."
+    sprint_report_md = "ניתוח ה-AI נכשל לאחר מספר ניסיונות. ראה לוגים לפרטים."
 
 # ── Stage 3: JSON Report ─────────────────────────────────────────────────────
 print("\n[STAGE 3] Generating report...")
@@ -205,8 +314,8 @@ report = {
         "total_posts_collected": len(raw_posts),
         "leads_identified": len(leads)
     },
-    "ai_summary": summary_he,
-    "leads": leads
+    "ai_report_markdown": sprint_report_md,
+    "intent_opportunities": leads
 }
 
 with open(REPORT_PATH, "w", encoding="utf-8") as f:
@@ -220,47 +329,19 @@ print("\n[STAGE 4] Sending email report...")
 try:
     msg   = MIMEMultipart("mixed")
     today = datetime.now(timezone.utc).strftime("%d/%m/%Y")
-    msg["Subject"] = f"🎯 Delta Agent – {len(leads)} לידים חדשים | {today}"
+    msg["Subject"] = f"📊 Reddit Intent Intelligence Sprint – {len(leads)} opportunities | {today}"
     msg["From"]    = SMTP_USER
     msg["To"]      = SMTP_TO
 
-    leads_html = ""
-    for lead in leads:
-        color = {"HIGH": "#e74c3c", "MEDIUM": "#f39c12", "LOW": "#27ae60"}.get(
-            lead.get("priority", "LOW"), "#888")
-        leads_html += f"""
-        <tr>
-          <td style="padding:8px;border-bottom:1px solid #eee;font-weight:bold;">{lead.get('rank','')}</td>
-          <td style="padding:8px;border-bottom:1px solid #eee;">
-            <a href="{lead.get('url','')}" style="color:#2980b9;">{lead.get('title','')}</a><br>
-            <small>r/{lead.get('subreddit','')} · u/{lead.get('author','')}</small>
-          </td>
-          <td style="padding:8px;border-bottom:1px solid #eee;text-align:center;">
-            <span style="background:{color};color:white;padding:2px 8px;border-radius:4px;font-size:12px;">
-              {lead.get('priority','')}
-            </span>
-          </td>
-          <td style="padding:8px;border-bottom:1px solid #eee;font-size:13px;">{lead.get('reason','')}</td>
-        </tr>"""
+    report_html = html.escape(sprint_report_md)
 
     html_body = f"""
     <html><body style="font-family:Arial,sans-serif;direction:rtl;text-align:right;">
-      <h2 style="color:#2c3e50;">🎯 Delta Agent – דוח לידים יומי</h2>
+      <h2 style="color:#2c3e50;">📊 Reddit Intent Intelligence Sprint</h2>
       <p style="color:#7f8c8d;">{today} | {datetime.now(timezone.utc).strftime('%H:%M')} UTC</p>
-      <div style="background:#ecf0f1;padding:15px;border-radius:8px;margin-bottom:20px;">
-        <strong>סיכום:</strong> {summary_he}
+      <div style="background:#ecf0f1;padding:15px;border-radius:8px;margin-bottom:20px;direction:ltr;text-align:left;white-space:pre-wrap;font-family:Consolas,Menlo,monospace;">
+        {report_html}
       </div>
-      <table style="width:100%;border-collapse:collapse;direction:ltr;text-align:left;">
-        <thead>
-          <tr style="background:#2c3e50;color:white;">
-            <th style="padding:10px;">#</th>
-            <th style="padding:10px;">פוסט</th>
-            <th style="padding:10px;">עדיפות</th>
-            <th style="padding:10px;">סיבה</th>
-          </tr>
-        </thead>
-        <tbody>{leads_html}</tbody>
-      </table>
       <p style="margin-top:20px;color:#95a5a6;font-size:12px;">
         סה"כ נסרקו: {len(raw_posts)} פוסטים מ-{len(SUBREDDITS)} subreddits | קובץ JSON מלא מצורף
       </p>
@@ -295,7 +376,7 @@ except Exception as e:
 print("\n" + "=" * 60)
 print("DELTA AGENT – Run Complete")
 print(f"Posts scanned : {len(raw_posts)}")
-print(f"Leads found   : {len(leads)}")
+print(f"Intent opportunities: {len(leads)}")
 print(f"Report saved  : {REPORT_PATH}")
 print("=" * 60)
 sys.exit(0)
