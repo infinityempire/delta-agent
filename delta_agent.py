@@ -12,6 +12,7 @@ import sys
 import json
 import re
 import time
+import xml.etree.ElementTree as ET
 import smtplib
 import ssl
 import requests
@@ -20,6 +21,7 @@ from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
 from email.mime.base import MIMEBase
 from email import encoders
+from urllib.parse import urlparse
 
 # ── Environment Variables ────────────────────────────────────────────────────
 GEMINI_API_KEY  = os.environ.get("GEMINI_API_KEY", "")
@@ -70,7 +72,7 @@ SCRAPERAPI_COUNTRY_CODE = os.environ.get("SCRAPERAPI_COUNTRY_CODE", "us")
 HEADERS = {
     "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
                   "(KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
-    "Accept": "application/json, text/plain, */*",
+    "Accept": "application/json, application/rss+xml, text/xml, text/plain, */*",
     "Accept-Language": "en-US,en;q=0.9",
     "Connection": "keep-alive"
 }
@@ -147,6 +149,77 @@ def reddit_proxy_requests(reddit_url):
         ))
     return attempts
 
+def reddit_json_url(subreddit):
+    """Return Reddit's newest posts JSON URL without provider-sensitive redirects."""
+    return f"https://www.reddit.com/r/{subreddit}/new/.json?limit={POSTS_PER_SUB}&raw_json=1"
+
+
+def reddit_rss_url(subreddit):
+    """Return Reddit's RSS feed as a lightweight fallback when JSON is blocked."""
+    return f"https://www.reddit.com/r/{subreddit}/new/.rss?limit={POSTS_PER_SUB}"
+
+
+def normalize_post(subreddit, title, body, url, author):
+    """Normalize and filter Reddit post fields used by Gemini analysis."""
+    title = (title or "").strip()
+    body = (body or "").strip()
+    author = (author or "").strip()
+
+    if not title or body in ("", "[deleted]", "[removed]"):
+        return None
+    if len(body) > MAX_BODY_CHARS:
+        body = body[:MAX_BODY_CHARS] + "..."
+    if url.startswith("/"):
+        url = "https://reddit.com" + url
+
+    return {
+        "subreddit": subreddit,
+        "title": title,
+        "body": body,
+        "url": url,
+        "author": author,
+    }
+
+
+def posts_from_reddit_listing(subreddit, listing):
+    """Extract normalized posts from a Reddit JSON listing payload."""
+    posts = []
+    for p in listing.get("data", {}).get("children", []):
+        d = p.get("data", {})
+        post = normalize_post(
+            subreddit=subreddit,
+            title=d.get("title", ""),
+            body=d.get("selftext", ""),
+            url=d.get("permalink", ""),
+            author=d.get("author", ""),
+        )
+        if post:
+            posts.append(post)
+    return posts
+
+
+def posts_from_reddit_rss(subreddit, rss_text):
+    """Extract normalized posts from Reddit's Atom/RSS fallback feed."""
+    root = ET.fromstring(rss_text)
+    atom = {"atom": "http://www.w3.org/2005/Atom"}
+    posts = []
+    for entry in root.findall("atom:entry", atom):
+        title = entry.findtext("atom:title", default="", namespaces=atom)
+        body = entry.findtext("atom:content", default="", namespaces=atom)
+        author_node = entry.find("atom:author/atom:name", atom)
+        author = author_node.text if author_node is not None else ""
+        link = ""
+        for link_node in entry.findall("atom:link", atom):
+            href = link_node.attrib.get("href", "")
+            if urlparse(href).netloc.endswith("reddit.com"):
+                link = href
+                break
+        post = normalize_post(subreddit, title, body, link, author.replace("/u/", ""))
+        if post:
+            posts.append(post)
+    return posts
+
+
 def parse_reddit_json_response(resp):
     """Parse Reddit JSON from direct JSON or browser-rendered text/HTML wrappers."""
     try:
@@ -171,38 +244,39 @@ print("\n[STAGE 1] Scraping Reddit via read-only proxy provider...")
 raw_posts = []
 scrape_warnings = []
 for sub in SUBREDDITS:
-    reddit_url = f"https://www.reddit.com/r/{sub}/new.json?limit={POSTS_PER_SUB}"
     count = 0
-    for provider, proxy_url, params in reddit_proxy_requests(reddit_url):
-        try:
-            resp = requests.get(proxy_url, params=params, headers=HEADERS, timeout=60)
-            if resp.status_code != 200:
-                warning = f"r/{sub} via {provider}: HTTP {resp.status_code}"
+    reddit_targets = [
+        ("JSON", reddit_json_url(sub)),
+        ("RSS", reddit_rss_url(sub)),
+    ]
+    for target_type, reddit_url in reddit_targets:
+        if count:
+            break
+        print(f"  [INFO] r/{sub}: trying {target_type} endpoint")
+        for provider, proxy_url, params in reddit_proxy_requests(reddit_url):
+            try:
+                resp = requests.get(proxy_url, params=params, headers=HEADERS, timeout=60)
+                if resp.status_code != 200:
+                    warning = f"r/{sub} {target_type} via {provider}: HTTP {resp.status_code}"
+                    print(f"  [WARN] {warning}")
+                    scrape_warnings.append(warning)
+                    continue
+                if target_type == "JSON":
+                    posts = posts_from_reddit_listing(sub, parse_reddit_json_response(resp))
+                else:
+                    posts = posts_from_reddit_rss(sub, resp.text)
+                raw_posts.extend(posts)
+                count += len(posts)
+                if count:
+                    print(f"  [OK] r/{sub}: {count} posts collected via {provider} {target_type}")
+                    break
+                warning = f"r/{sub} {target_type} via {provider}: no usable posts in 200 response"
                 print(f"  [WARN] {warning}")
                 scrape_warnings.append(warning)
-                continue
-            posts = parse_reddit_json_response(resp).get("data", {}).get("children", [])
-            for p in posts:
-                d      = p.get("data", {})
-                title  = d.get("title", "").strip()
-                body   = d.get("selftext", "").strip()
-                url_p  = "https://reddit.com" + d.get("permalink", "")
-                author = d.get("author", "")
-                if not title or body in ("", "[deleted]", "[removed]"):
-                    continue
-                if len(body) > MAX_BODY_CHARS:
-                    body = body[:MAX_BODY_CHARS] + "..."
-                raw_posts.append({
-                    "subreddit": sub, "title": title, "body": body,
-                    "url": url_p, "author": author
-                })
-                count += 1
-            print(f"  [OK] r/{sub}: {count} posts collected via {provider}")
-            break
-        except Exception as e:
-            warning = redact_secret_text(f"r/{sub} via {provider}: {type(e).__name__}: {e}")
-            print(f"  [ERROR] {warning}")
-            scrape_warnings.append(warning)
+            except Exception as e:
+                warning = redact_secret_text(f"r/{sub} {target_type} via {provider}: {type(e).__name__}: {e}")
+                print(f"  [ERROR] {warning}")
+                scrape_warnings.append(warning)
     if count == 0:
         scrape_warnings.append(f"r/{sub}: no posts collected from configured providers")
     time.sleep(1)
