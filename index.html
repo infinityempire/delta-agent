@@ -1,0 +1,57 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="theme-color" content="#000000" />
+    <meta name="description" content="Infinity Agent — AI-powered assistant PWA" />
+
+    <title>Infinity Agent</title>
+
+    <!-- ✅ Manifest (שני קבצים – לתאימות מלאה) -->
+    <link rel="manifest" href="/manifest.json" />
+    <link rel="manifest" href="/manifest.webmanifest" />
+
+    <!-- ✅ Icons -->
+    <link rel="icon" type="image/png" sizes="192x192" href="/icon-192.png" />
+    <link rel="icon" type="image/png" sizes="512x512" href="/icon-512.png" />
+    <link rel="apple-touch-icon" href="/icon-512.png" />
+
+    <!-- ✅ Offline Fallback -->
+    <link rel="alternate" href="/offline.html" />
+
+    <style>
+      body {
+        background-color: #000;
+        color: #fff;
+        font-family: system-ui, sans-serif;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        height: 100vh;
+      }
+    </style>
+  <link rel="manifest" href="/manifest.json">
+  <script>if("serviceWorker" in navigator){navigator.serviceWorker.register("/service-worker.js");}</script>
+    <script type="module" crossorigin src="/assets/index-BL3rYDO4.js"></script>
+  </head>
+  <body>
+    <div id="root">
+      <h1>🚀 Infinity Agent</h1>
+      <p>Your AI-powered assistant PWA is running!</p>
+    </div>
+
+
+    <script>
+      // ✅ רישום אוטומטי של Service Worker
+      if ("serviceWorker" in navigator) {
+        window.addEventListener("load", () => {
+          navigator.serviceWorker
+            .register("/sw.js")
+            .then((reg) => console.log("✅ Service Worker registered:", reg.scope))
+            .catch((err) => console.error("❌ Service Worker failed:", err));
+        });
+      }
+    </script>
+  </body>
+</html>
