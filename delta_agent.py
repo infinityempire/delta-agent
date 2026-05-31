@@ -196,9 +196,9 @@ for sub in SUBREDDITS:
 
 print(f"\n[STAGE 1] Total posts collected: {len(raw_posts)}")
 
-if not raw_posts:
-    print("[CRITICAL] No posts collected. Exiting.")
-    sys.exit(1)
+scraping_failed = not raw_posts
+if scraping_failed:
+    print("[WARN] No posts collected. Continuing with a deliverable failure report instead of failing the workflow.")
 
 # ── Stage 2: Gemini AI Analysis (with retry/backoff) ─────────────────────────
 print(f"\n[STAGE 2] Analyzing with Gemini AI ({GEMINI_MODEL})...")
@@ -271,13 +271,36 @@ POSTS TO ANALYZE:
 {posts_text}"""
 
 from google import genai as genai_new
-_gclient = genai_new.Client(api_key=GEMINI_API_KEY)
 
 leads            = []
 sprint_report_md = "ניתוח ה-AI לא הצליח להשלים."
 gemini_ok        = False
 
-for attempt in range(GEMINI_RETRIES):
+if scraping_failed:
+    sprint_report_md = """# 📊 Reddit Intent Intelligence Sprint Report
+**Target Market Analyzer:** Unable to determine because Reddit collection returned 0 posts
+**Compliance Status:** 100% Secure (Manual Action Only)
+---
+### 1. 🔥 The Pain Map
+* **Core Trigger:** No live Reddit posts were collected from the configured providers during this run.
+* **Emotional Hook & Scale:** No current market signals were available to analyze.
+---
+### 2. 🎯 High-Intent Signals
+No high-intent signals captured because all Reddit collection providers returned 0 usable posts.
+---
+### 3. 📈 Hot Discussion Angle
+No discussion angle captured because there were no posts to analyze.
+---
+### 4. 🛠️ Executive Action Items
+- **Total Intent Opportunities Captured:** 0
+- **Recommended Strategy:** Verify SCRAPINGBEE_API_KEY or SCRAPER_API_KEY secrets and rerun the workflow.
+- **Safe Boundary Check:** Verified. 0 automated actions suggested. Brand reputation fully protected.
+"""
+    print("[WARN] Skipping Gemini because there are no posts to analyze")
+else:
+    _gclient = genai_new.Client(api_key=GEMINI_API_KEY)
+
+for attempt in range(GEMINI_RETRIES if not scraping_failed else 0):
     try:
         print(f"  [INFO] Gemini attempt {attempt + 1}/{GEMINI_RETRIES}...")
         response = _gclient.models.generate_content(model=GEMINI_MODEL, contents=prompt)
@@ -300,7 +323,7 @@ for attempt in range(GEMINI_RETRIES):
             print(f"  [INFO] Waiting {wait}s before retry...")
             time.sleep(wait)
 
-if not gemini_ok:
+if not gemini_ok and not scraping_failed:
     print("[WARN] All Gemini attempts failed. Sending empty report.")
     sprint_report_md = "ניתוח ה-AI נכשל לאחר מספר ניסיונות. ראה לוגים לפרטים."
 
@@ -326,6 +349,7 @@ print(f"[OK] Report saved to {REPORT_PATH}")
 # ── Stage 4: SMTP Email Delivery ─────────────────────────────────────────────
 print("\n[STAGE 4] Sending email report...")
 
+email_sent = False
 try:
     msg   = MIMEMultipart("mixed")
     today = datetime.now(timezone.utc).strftime("%d/%m/%Y")
@@ -367,6 +391,7 @@ try:
 
         server.sendmail(SMTP_USER, SMTP_TO, msg.as_string())
 
+    email_sent = True
     print("[OK] Email sent successfully")
 
 except Exception as e:
@@ -379,4 +404,4 @@ print(f"Posts scanned : {len(raw_posts)}")
 print(f"Intent opportunities: {len(leads)}")
 print(f"Report saved  : {REPORT_PATH}")
 print("=" * 60)
-sys.exit(0)
+sys.exit(0 if email_sent else 1)

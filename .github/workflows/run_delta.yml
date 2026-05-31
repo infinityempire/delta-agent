@@ -39,6 +39,7 @@ jobs:
           SMTP_PASSWORD: ${{ secrets.SMTP_PASSWORD }}
           SMTP_TO: ${{ secrets.SMTP_TO }}
           SCRAPER_API_KEY: ${{ secrets.SCRAPER_API_KEY }}
+          SCRAPINGBEE_API_KEY: ${{ secrets.SCRAPINGBEE_API_KEY }}
           AGENT_GOAL: ${{ github.event.inputs.goal }}
         run: |
           python3 delta_agent.py
