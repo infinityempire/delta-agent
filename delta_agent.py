@@ -17,6 +17,7 @@ import html
 import re
 import xml.etree.ElementTree as ET
 import requests
+from urllib.parse import urljoin
 from datetime import datetime, timezone
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
@@ -87,7 +88,7 @@ if not SCRAPER_API_KEY:
 os.makedirs(OUTPUT_DIR, exist_ok=True)
 
 # ── Stage 1: Reddit Scraper ──────────────────────────────────────────────────
-print("\n[STAGE 1] Scraping Reddit via ScrapingBee → ScraperAPI → Reddit JSON → Reddit RSS...")
+print("\n[STAGE 1] Scraping Reddit via ScrapingBee → ScraperAPI → Reddit JSON/RSS/HTML...")
 
 def _strip_markup(value):
     text = html.unescape(value or "")
@@ -170,18 +171,39 @@ def _json_from_response(resp, subreddit, provider):
         raise ValueError(f"{provider} returned non-JSON content") from exc
 
 
-def _fetch_with_scrapingbee(subreddit):
-    provider = "ScrapingBee"
-    if not SCRAPINGBEE_API_KEY:
-        _diagnose_provider(subreddit, provider, "skipped", "SCRAPINGBEE_API_KEY not injected")
-        return []
-    reddit_url = f"https://www.reddit.com/r/{subreddit}/new.json?raw_json=1&limit={POSTS_PER_SUB}"
+def _posts_from_old_reddit_html(subreddit, html_text):
+    posts = []
+    # old.reddit.com renders each listing as a thing with a stable title anchor.
+    pattern = re.compile(
+        r'<a[^>]+class="[^"]*\btitle\b[^"]*"[^>]+href="([^"]+)"[^>]*>(.*?)</a>',
+        re.IGNORECASE | re.DOTALL,
+    )
+    for href, title_html in pattern.findall(html_text or ""):
+        title = _strip_markup(title_html)
+        if not title or title.lower() in {"next", "previous"}:
+            continue
+        url = urljoin("https://old.reddit.com", html.unescape(href))
+        normalized = _normalize_post(
+            subreddit=subreddit,
+            title=title,
+            body="[title-only post from Reddit listing]",
+            url=url,
+            author="",
+        )
+        if normalized:
+            posts.append(normalized)
+        if len(posts) >= POSTS_PER_SUB:
+            break
+    return posts
+
+
+def _scrapingbee_get(subreddit, provider, target_url, render_js="false"):
     resp = HTTP.get(
         "https://app.scrapingbee.com/api/v1/",
         params={
             "api_key": SCRAPINGBEE_API_KEY,
-            "url": reddit_url,
-            "render_js": "false",
+            "url": target_url,
+            "render_js": render_js,
             "premium_proxy": "true",
             "country_code": "us",
         },
@@ -189,32 +211,79 @@ def _fetch_with_scrapingbee(subreddit):
     )
     if resp.status_code != 200:
         _diagnose_provider(subreddit, provider, "http-error", f"HTTP {resp.status_code}")
+        return None
+    return resp
+
+
+def _scraperapi_get(subreddit, provider, target_url, render="false"):
+    resp = HTTP.get(
+        "http://api.scraperapi.com",
+        params={
+            "api_key": SCRAPER_API_KEY,
+            "url": target_url,
+            "country_code": "us",
+            "render": render,
+        },
+        timeout=REQUEST_TIMEOUT,
+    )
+    if resp.status_code != 200:
+        _diagnose_provider(subreddit, provider, "http-error", f"HTTP {resp.status_code}")
+        return None
+    return resp
+
+
+def _fetch_with_scrapingbee(subreddit):
+    provider = "ScrapingBee JSON"
+    if not SCRAPINGBEE_API_KEY:
+        _diagnose_provider(subreddit, provider, "skipped", "SCRAPINGBEE_API_KEY not injected")
+        return []
+    reddit_url = f"https://www.reddit.com/r/{subreddit}/new.json?raw_json=1&limit={POSTS_PER_SUB}"
+    resp = _scrapingbee_get(subreddit, provider, reddit_url, render_js="false")
+    if resp is None:
         return []
     posts = _posts_from_reddit_json(subreddit, _json_from_response(resp, subreddit, provider))
     _diagnose_provider(subreddit, provider, "ok", f"{len(posts)} usable posts")
     return posts
 
 
+def _fetch_with_scrapingbee_old_html(subreddit):
+    provider = "ScrapingBee old Reddit HTML"
+    if not SCRAPINGBEE_API_KEY:
+        _diagnose_provider(subreddit, provider, "skipped", "SCRAPINGBEE_API_KEY not injected")
+        return []
+    reddit_url = f"https://old.reddit.com/r/{subreddit}/new/"
+    resp = _scrapingbee_get(subreddit, provider, reddit_url, render_js="false")
+    if resp is None:
+        return []
+    posts = _posts_from_old_reddit_html(subreddit, resp.text)
+    _diagnose_provider(subreddit, provider, "ok", f"{len(posts)} usable posts")
+    return posts
+
+
 def _fetch_with_scraperapi(subreddit):
-    provider = "ScraperAPI"
+    provider = "ScraperAPI JSON"
     if not SCRAPER_API_KEY:
         _diagnose_provider(subreddit, provider, "skipped", "SCRAPER_API_KEY not injected")
         return []
     reddit_url = f"https://www.reddit.com/r/{subreddit}/new.json?raw_json=1&limit={POSTS_PER_SUB}"
-    resp = HTTP.get(
-        "http://api.scraperapi.com",
-        params={
-            "api_key": SCRAPER_API_KEY,
-            "url": reddit_url,
-            "country_code": "us",
-            "render": "false",
-        },
-        timeout=REQUEST_TIMEOUT,
-    )
-    if resp.status_code != 200:
-        _diagnose_provider(subreddit, provider, "http-error", f"HTTP {resp.status_code}")
+    resp = _scraperapi_get(subreddit, provider, reddit_url, render="false")
+    if resp is None:
         return []
     posts = _posts_from_reddit_json(subreddit, _json_from_response(resp, subreddit, provider))
+    _diagnose_provider(subreddit, provider, "ok", f"{len(posts)} usable posts")
+    return posts
+
+
+def _fetch_with_scraperapi_old_html(subreddit):
+    provider = "ScraperAPI old Reddit HTML"
+    if not SCRAPER_API_KEY:
+        _diagnose_provider(subreddit, provider, "skipped", "SCRAPER_API_KEY not injected")
+        return []
+    reddit_url = f"https://old.reddit.com/r/{subreddit}/new/"
+    resp = _scraperapi_get(subreddit, provider, reddit_url, render="false")
+    if resp is None:
+        return []
+    posts = _posts_from_old_reddit_html(subreddit, resp.text)
     _diagnose_provider(subreddit, provider, "ok", f"{len(posts)} usable posts")
     return posts
 
@@ -261,14 +330,29 @@ def _fetch_with_reddit_rss(subreddit):
     return posts
 
 
+def _fetch_with_old_reddit_html(subreddit):
+    provider = "Old Reddit HTML"
+    reddit_url = f"https://old.reddit.com/r/{subreddit}/new/"
+    resp = HTTP.get(reddit_url, timeout=REQUEST_TIMEOUT)
+    if resp.status_code != 200:
+        _diagnose_provider(subreddit, provider, "http-error", f"HTTP {resp.status_code}")
+        return []
+    posts = _posts_from_old_reddit_html(subreddit, resp.text)
+    _diagnose_provider(subreddit, provider, "ok", f"{len(posts)} usable posts")
+    return posts
+
+
 raw_posts = []
 seen_urls = set()
 for sub in SUBREDDITS:
     providers = (
-        ("ScrapingBee", _fetch_with_scrapingbee),
-        ("ScraperAPI", _fetch_with_scraperapi),
+        ("ScrapingBee JSON", _fetch_with_scrapingbee),
+        ("ScrapingBee old Reddit HTML", _fetch_with_scrapingbee_old_html),
+        ("ScraperAPI JSON", _fetch_with_scraperapi),
+        ("ScraperAPI old Reddit HTML", _fetch_with_scraperapi_old_html),
         ("Reddit JSON", _fetch_with_reddit_json),
         ("Reddit RSS", _fetch_with_reddit_rss),
+        ("Old Reddit HTML", _fetch_with_old_reddit_html),
     )
     collected = []
     for provider_name, fetch_posts in providers:
