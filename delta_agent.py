@@ -14,6 +14,7 @@ import time
 import smtplib
 import ssl
 import html
+import re
 import xml.etree.ElementTree as ET
 import requests
 from datetime import datetime, timezone
@@ -44,12 +45,21 @@ GEMINI_RETRIES = 3
 GEMINI_BACKOFF = [15, 45, 90]        # seconds to wait before each retry (max 3 attempts)
 
 HEADERS = {
-    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
-                  "(KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
+    "User-Agent": "DeltaAgent/1.0 (+https://github.com/infinityempire/delta-agent) "
+                  "market-intelligence; contact: configured-repo-owner",
     "Accept": "application/json, text/plain, */*",
     "Accept-Language": "en-US,en;q=0.9",
     "Connection": "keep-alive"
 }
+REQUEST_TIMEOUT = 60
+
+HTTP = requests.Session()
+HTTP.headers.update(HEADERS)
+# Do not inherit runner-level HTTP(S)_PROXY values. In earlier runs, Reddit
+# fallback calls were sent through an environment proxy and failed with 403.
+HTTP.trust_env = False
+
+provider_diagnostics = []
 
 # ── Startup ───────────────────────────────────────────────────────────────────
 print("=" * 60)
@@ -68,20 +78,47 @@ if missing:
     sys.exit(1)
 
 print("[OK] All required env vars present")
+print(f"[INFO] SCRAPINGBEE_API_KEY injected: {'yes' if SCRAPINGBEE_API_KEY else 'no'}")
+print(f"[INFO] SCRAPER_API_KEY injected: {'yes' if SCRAPER_API_KEY else 'no'}")
 if not SCRAPINGBEE_API_KEY:
     print("[WARN] SCRAPINGBEE_API_KEY not set. ScraperAPI will be used as the first proxy fallback.")
 if not SCRAPER_API_KEY:
-    print("[WARN] SCRAPER_API_KEY not set. Reddit RSS will be used if ScrapingBee is unavailable.")
+    print("[WARN] SCRAPER_API_KEY not set. Direct Reddit fallbacks will be used if ScrapingBee is unavailable.")
 os.makedirs(OUTPUT_DIR, exist_ok=True)
 
 # ── Stage 1: Reddit Scraper ──────────────────────────────────────────────────
-print("\n[STAGE 1] Scraping Reddit via ScrapingBee → ScraperAPI → Reddit RSS...")
+print("\n[STAGE 1] Scraping Reddit via ScrapingBee → ScraperAPI → Reddit JSON → Reddit RSS...")
+
+def _strip_markup(value):
+    text = html.unescape(value or "")
+    text = re.sub(r"<[^>]+>", " ", text)
+    return " ".join(text.split())
+
+
+def _diagnose_provider(subreddit, provider, status, detail=""):
+    safe_detail = str(detail or "")[:180]
+    provider_diagnostics.append({
+        "subreddit": subreddit,
+        "provider": provider,
+        "status": status,
+        "detail": safe_detail,
+    })
+    suffix = f": {safe_detail}" if safe_detail else ""
+    level = "OK" if status == "ok" else "WARN"
+    print(f"  [{level}] r/{subreddit}: {provider} {status}{suffix}")
+
 
 def _normalize_post(subreddit, title, body, url, author=""):
-    title = (title or "").strip()
-    body = (body or "").strip()
-    if not title or body in ("", "[deleted]", "[removed]"):
+    title = _strip_markup(title)
+    body = _strip_markup(body)
+    if not title:
         return None
+    if body in ("[deleted]", "[removed]"):
+        body = ""
+    if not body:
+        # Many Reddit JSON/RSS entries are link or title-only posts. The old
+        # scraper discarded those, which could turn a valid scrape into 0 posts.
+        body = "[title-only post]"
     if len(body) > MAX_BODY_CHARS:
         body = body[:MAX_BODY_CHARS] + "..."
     return {
@@ -95,13 +132,23 @@ def _normalize_post(subreddit, title, body, url, author=""):
 
 def _posts_from_reddit_json(subreddit, payload):
     posts = []
-    for p in payload.get("data", {}).get("children", []):
+    children = payload.get("data", {}).get("children", [])
+    for p in children:
         d = p.get("data", {})
+        permalink = d.get("permalink", "")
+        if permalink.startswith("http"):
+            url = permalink
+        else:
+            url = "https://reddit.com" + permalink if permalink else d.get("url", "")
+        body = d.get("selftext") or d.get("selftext_html") or ""
+        if not body and d.get("crosspost_parent_list"):
+            parent = d["crosspost_parent_list"][0]
+            body = parent.get("selftext") or parent.get("selftext_html") or ""
         normalized = _normalize_post(
             subreddit=subreddit,
             title=d.get("title", ""),
-            body=d.get("selftext", ""),
-            url="https://reddit.com" + d.get("permalink", ""),
+            body=body,
+            url=url,
             author=d.get("author", ""),
         )
         if normalized:
@@ -109,47 +156,87 @@ def _posts_from_reddit_json(subreddit, payload):
     return posts
 
 
+def _json_from_response(resp, subreddit, provider):
+    try:
+        return resp.json()
+    except ValueError as exc:
+        ctype = resp.headers.get("content-type", "unknown")
+        _diagnose_provider(
+            subreddit,
+            provider,
+            "bad-json",
+            f"HTTP {resp.status_code}, content-type={ctype}",
+        )
+        raise ValueError(f"{provider} returned non-JSON content") from exc
+
+
 def _fetch_with_scrapingbee(subreddit):
+    provider = "ScrapingBee"
     if not SCRAPINGBEE_API_KEY:
+        _diagnose_provider(subreddit, provider, "skipped", "SCRAPINGBEE_API_KEY not injected")
         return []
-    reddit_url = f"https://www.reddit.com/r/{subreddit}/new.json?limit={POSTS_PER_SUB}"
-    resp = requests.get(
+    reddit_url = f"https://www.reddit.com/r/{subreddit}/new.json?raw_json=1&limit={POSTS_PER_SUB}"
+    resp = HTTP.get(
         "https://app.scrapingbee.com/api/v1/",
         params={
             "api_key": SCRAPINGBEE_API_KEY,
             "url": reddit_url,
             "render_js": "false",
+            "premium_proxy": "true",
+            "country_code": "us",
         },
-        headers=HEADERS,
-        timeout=60,
+        timeout=REQUEST_TIMEOUT,
     )
     if resp.status_code != 200:
-        print(f"  [WARN] r/{subreddit}: ScrapingBee HTTP {resp.status_code}")
+        _diagnose_provider(subreddit, provider, "http-error", f"HTTP {resp.status_code}")
         return []
-    return _posts_from_reddit_json(subreddit, resp.json())
+    posts = _posts_from_reddit_json(subreddit, _json_from_response(resp, subreddit, provider))
+    _diagnose_provider(subreddit, provider, "ok", f"{len(posts)} usable posts")
+    return posts
 
 
 def _fetch_with_scraperapi(subreddit):
+    provider = "ScraperAPI"
     if not SCRAPER_API_KEY:
+        _diagnose_provider(subreddit, provider, "skipped", "SCRAPER_API_KEY not injected")
         return []
-    reddit_url = f"https://www.reddit.com/r/{subreddit}/new.json?limit={POSTS_PER_SUB}"
-    proxy_url = (
-        f"http://api.scraperapi.com"
-        f"?api_key={SCRAPER_API_KEY}"
-        f"&url={requests.utils.quote(reddit_url, safe='')}"
+    reddit_url = f"https://www.reddit.com/r/{subreddit}/new.json?raw_json=1&limit={POSTS_PER_SUB}"
+    resp = HTTP.get(
+        "http://api.scraperapi.com",
+        params={
+            "api_key": SCRAPER_API_KEY,
+            "url": reddit_url,
+            "country_code": "us",
+            "render": "false",
+        },
+        timeout=REQUEST_TIMEOUT,
     )
-    resp = requests.get(proxy_url, headers=HEADERS, timeout=60)
     if resp.status_code != 200:
-        print(f"  [WARN] r/{subreddit}: ScraperAPI HTTP {resp.status_code}")
+        _diagnose_provider(subreddit, provider, "http-error", f"HTTP {resp.status_code}")
         return []
-    return _posts_from_reddit_json(subreddit, resp.json())
+    posts = _posts_from_reddit_json(subreddit, _json_from_response(resp, subreddit, provider))
+    _diagnose_provider(subreddit, provider, "ok", f"{len(posts)} usable posts")
+    return posts
+
+
+def _fetch_with_reddit_json(subreddit):
+    provider = "Reddit JSON"
+    reddit_url = f"https://www.reddit.com/r/{subreddit}/new.json?raw_json=1&limit={POSTS_PER_SUB}"
+    resp = HTTP.get(reddit_url, timeout=REQUEST_TIMEOUT)
+    if resp.status_code != 200:
+        _diagnose_provider(subreddit, provider, "http-error", f"HTTP {resp.status_code}")
+        return []
+    posts = _posts_from_reddit_json(subreddit, _json_from_response(resp, subreddit, provider))
+    _diagnose_provider(subreddit, provider, "ok", f"{len(posts)} usable posts")
+    return posts
 
 
 def _fetch_with_reddit_rss(subreddit):
+    provider = "Reddit RSS"
     rss_url = f"https://www.reddit.com/r/{subreddit}/new/.rss?limit={POSTS_PER_SUB}"
-    resp = requests.get(rss_url, headers=HEADERS, timeout=60)
+    resp = HTTP.get(rss_url, timeout=REQUEST_TIMEOUT)
     if resp.status_code != 200:
-        print(f"  [WARN] r/{subreddit}: Reddit RSS HTTP {resp.status_code}")
+        _diagnose_provider(subreddit, provider, "http-error", f"HTTP {resp.status_code}")
         return []
 
     root = ET.fromstring(resp.content)
@@ -163,21 +250,24 @@ def _fetch_with_reddit_rss(subreddit):
         url = link.get("href", "") if link is not None else ""
         normalized = _normalize_post(
             subreddit=subreddit,
-            title=html.unescape(title),
-            body=html.unescape(body),
+            title=title,
+            body=body,
             url=url,
             author=author,
         )
         if normalized:
             posts.append(normalized)
+    _diagnose_provider(subreddit, provider, "ok", f"{len(posts)} usable posts")
     return posts
 
 
 raw_posts = []
+seen_urls = set()
 for sub in SUBREDDITS:
     providers = (
         ("ScrapingBee", _fetch_with_scrapingbee),
         ("ScraperAPI", _fetch_with_scraperapi),
+        ("Reddit JSON", _fetch_with_reddit_json),
         ("Reddit RSS", _fetch_with_reddit_rss),
     )
     collected = []
@@ -185,11 +275,15 @@ for sub in SUBREDDITS:
         try:
             collected = fetch_posts(sub)
             if collected:
-                raw_posts.extend(collected)
+                for post in collected:
+                    key = post.get("url") or f"{post['subreddit']}::{post['title']}"
+                    if key not in seen_urls:
+                        seen_urls.add(key)
+                        raw_posts.append(post)
                 print(f"  [OK] r/{sub}: {len(collected)} posts collected via {provider_name}")
                 break
         except Exception as e:
-            print(f"  [WARN] r/{sub}: {provider_name} failed: {e}")
+            _diagnose_provider(sub, provider_name, "exception", f"{type(e).__name__}: {e}")
     if not collected:
         print(f"  [ERROR] r/{sub}: all scraping providers failed")
     time.sleep(1)
@@ -335,8 +429,11 @@ report = {
     "scan_stats": {
         "subreddits_scanned": SUBREDDITS,
         "total_posts_collected": len(raw_posts),
-        "leads_identified": len(leads)
+        "leads_identified": len(leads),
+        "scrapingbee_key_injected": bool(SCRAPINGBEE_API_KEY),
+        "scraperapi_key_injected": bool(SCRAPER_API_KEY),
     },
+    "provider_diagnostics": provider_diagnostics,
     "ai_report_markdown": sprint_report_md,
     "intent_opportunities": leads
 }
