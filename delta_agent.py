@@ -88,7 +88,7 @@ if not SCRAPER_API_KEY:
 os.makedirs(OUTPUT_DIR, exist_ok=True)
 
 # ── Stage 1: Reddit Scraper ──────────────────────────────────────────────────
-print("\n[STAGE 1] Scraping Reddit via ScrapingBee → ScraperAPI → Reddit JSON/RSS/HTML...")
+print("\n[STAGE 1] Scraping Reddit via ScrapingBee → ScraperAPI → Jina → Reddit JSON/RSS/HTML...")
 
 def _strip_markup(value):
     text = html.unescape(value or "")
@@ -197,6 +197,30 @@ def _posts_from_old_reddit_html(subreddit, html_text):
     return posts
 
 
+def _posts_from_jina_markdown(subreddit, markdown_text):
+    posts = []
+    pattern = re.compile(
+        rf'\[([^\]]{{8,200}})\]\((https?://(?:old\.)?reddit\.com/r/{re.escape(subreddit)}/comments/[^)]+)\)',
+        re.IGNORECASE,
+    )
+    for title, url in pattern.findall(markdown_text or ""):
+        title = _strip_markup(title)
+        if not title or title.lower() in {"comments", "permalink", "source"}:
+            continue
+        normalized = _normalize_post(
+            subreddit=subreddit,
+            title=title,
+            body="[title-only post from Jina Reader Reddit listing]",
+            url=url,
+            author="",
+        )
+        if normalized:
+            posts.append(normalized)
+        if len(posts) >= POSTS_PER_SUB:
+            break
+    return posts
+
+
 def _scrapingbee_get(subreddit, provider, target_url, render_js="false"):
     resp = HTTP.get(
         "https://app.scrapingbee.com/api/v1/",
@@ -288,6 +312,18 @@ def _fetch_with_scraperapi_old_html(subreddit):
     return posts
 
 
+def _fetch_with_jina_reader(subreddit):
+    provider = "Jina Reader old Reddit"
+    reader_url = f"https://r.jina.ai/https://old.reddit.com/r/{subreddit}/new/"
+    resp = HTTP.get(reader_url, timeout=REQUEST_TIMEOUT)
+    if resp.status_code != 200:
+        _diagnose_provider(subreddit, provider, "http-error", f"HTTP {resp.status_code}")
+        return []
+    posts = _posts_from_jina_markdown(subreddit, resp.text)
+    _diagnose_provider(subreddit, provider, "ok", f"{len(posts)} usable posts")
+    return posts
+
+
 def _fetch_with_reddit_json(subreddit):
     provider = "Reddit JSON"
     reddit_url = f"https://www.reddit.com/r/{subreddit}/new.json?raw_json=1&limit={POSTS_PER_SUB}"
@@ -350,6 +386,7 @@ for sub in SUBREDDITS:
         ("ScrapingBee old Reddit HTML", _fetch_with_scrapingbee_old_html),
         ("ScraperAPI JSON", _fetch_with_scraperapi),
         ("ScraperAPI old Reddit HTML", _fetch_with_scraperapi_old_html),
+        ("Jina Reader old Reddit", _fetch_with_jina_reader),
         ("Reddit JSON", _fetch_with_reddit_json),
         ("Reddit RSS", _fetch_with_reddit_rss),
         ("Old Reddit HTML", _fetch_with_old_reddit_html),
