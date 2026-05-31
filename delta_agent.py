@@ -284,6 +284,35 @@ def _fetch_with_scrapingbee_old_html(subreddit):
     return posts
 
 
+def _fetch_with_scrapingbee_rendered_markdown(subreddit):
+    provider = "ScrapingBee rendered Reddit markdown"
+    if not SCRAPINGBEE_API_KEY:
+        _diagnose_provider(subreddit, provider, "skipped", "SCRAPINGBEE_API_KEY not injected")
+        return []
+    reddit_url = f"https://www.reddit.com/r/{subreddit}/new/"
+    resp = HTTP.get(
+        "https://app.scrapingbee.com/api/v1/",
+        params={
+            "api_key": SCRAPINGBEE_API_KEY,
+            "url": reddit_url,
+            "render_js": "true",
+            "stealth_proxy": "true",
+            "country_code": "us",
+            "return_page_markdown": "true",
+            "wait": "5000",
+        },
+        timeout=REQUEST_TIMEOUT,
+    )
+    if resp.status_code != 200:
+        _diagnose_provider(subreddit, provider, "http-error", f"HTTP {resp.status_code}")
+        return []
+    posts = _posts_from_jina_markdown(subreddit, resp.text)
+    if not posts:
+        posts = _posts_from_old_reddit_html(subreddit, resp.text)
+    _diagnose_provider(subreddit, provider, "ok", f"{len(posts)} usable posts")
+    return posts
+
+
 def _fetch_with_scraperapi(subreddit):
     provider = "ScraperAPI JSON"
     if not SCRAPER_API_KEY:
@@ -384,6 +413,7 @@ for sub in SUBREDDITS:
     providers = (
         ("ScrapingBee JSON", _fetch_with_scrapingbee),
         ("ScrapingBee old Reddit HTML", _fetch_with_scrapingbee_old_html),
+        ("ScrapingBee rendered Reddit markdown", _fetch_with_scrapingbee_rendered_markdown),
         ("ScraperAPI JSON", _fetch_with_scraperapi),
         ("ScraperAPI old Reddit HTML", _fetch_with_scraperapi_old_html),
         ("Jina Reader old Reddit", _fetch_with_jina_reader),
