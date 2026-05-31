@@ -384,11 +384,6 @@ try:
     ctx = ssl.create_default_context()
     with smtplib.SMTP_SSL(SMTP_HOST, SMTP_PORT, context=ctx) as server:
         server.login(SMTP_USER, SMTP_PASSWORD)
-        
-
-
-# keep-alive: 2026-05-27
-
         server.sendmail(SMTP_USER, SMTP_TO, msg.as_string())
 
     email_sent = True
