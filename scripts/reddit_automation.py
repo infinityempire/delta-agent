@@ -14,6 +14,19 @@ Features:
 Usage:
     python3 scripts/reddit_automation.py [--dry-run] [--headless]
     python3 scripts/reddit_automation.py --post "Title" "Body" [--subreddit=r/startups]
+
+Environment Variables:
+    REDDIT_USERNAME    Reddit username (alternative to --username)
+    REDDIT_PASSWORD     Reddit password (alternative to --password)
+
+Examples:
+    # Using environment variables (recommended for production)
+    export REDDIT_USERNAME="your_username"
+    export REDDIT_PASSWORD="your_password"
+    python3 scripts/reddit_automation.py --login
+
+    # Using command-line arguments (for testing)
+    python3 scripts/reddit_automation.py --login --username user --password pass
 """
 
 import argparse
