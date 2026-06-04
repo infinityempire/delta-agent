@@ -6,6 +6,9 @@ on:
       - main
   workflow_dispatch: # אפשר להריץ גם ידנית
 
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+
 jobs:
   preview:
     runs-on: ubuntu-latest
