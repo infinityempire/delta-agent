@@ -434,32 +434,61 @@ def _fetch_with_scrapingbee_old_html(subreddit):
 
 
 def _fetch_with_scrapingbee_rendered_markdown(subreddit):
+    """Fetch posts via ScrapingBee rendered markdown with retry and backoff"""
     provider = "ScrapingBee rendered Reddit markdown"
     if not SCRAPINGBEE_API_KEY:
         _diagnose_provider(subreddit, provider, "skipped", "SCRAPINGBEE_API_KEY not injected")
         return []
     reddit_url = f"https://www.reddit.com/r/{subreddit}/new/"
-    resp = HTTP.get(
-        "https://app.scrapingbee.com/api/v1/",
-        params={
-            "api_key": SCRAPINGBEE_API_KEY,
-            "url": reddit_url,
-            "render_js": "true",
-            "stealth_proxy": "true",
-            "country_code": "us",
-            "return_page_markdown": "true",
-            "wait": "5000",
-        },
-        timeout=REQUEST_TIMEOUT,
-    )
-    if resp.status_code != 200:
-        _diagnose_provider(subreddit, provider, "http-error", f"HTTP {resp.status_code}")
-        return []
-    posts = _posts_from_jina_markdown(subreddit, resp.text)
-    if not posts:
-        posts = _posts_from_old_reddit_html(subreddit, resp.text)
-    _diagnose_provider(subreddit, provider, "ok", f"{len(posts)} usable posts")
-    return posts
+
+    for attempt in range(HTTP_RETRIES):
+        try:
+            resp = HTTP.get(
+                "https://app.scrapingbee.com/api/v1/",
+                params={
+                    "api_key": SCRAPINGBEE_API_KEY,
+                    "url": reddit_url,
+                    "render_js": "true",
+                    "stealth_proxy": "true",
+                    "country_code": "us",
+                    "return_page_markdown": "true",
+                    "wait": "5000",
+                },
+                timeout=REQUEST_TIMEOUT,
+            )
+
+            if resp.status_code == HTTP_OK:
+                posts = _posts_from_jina_markdown(subreddit, resp.text)
+                if not posts:
+                    posts = _posts_from_old_reddit_html(subreddit, resp.text)
+                _diagnose_provider(subreddit, provider, "ok", f"{len(posts)} usable posts")
+                return posts
+
+            should_retry = _handle_http_error(
+                subreddit, provider, resp.status_code, attempt, HTTP_RETRIES
+            )
+            if not should_retry:
+                return []
+
+            if resp.status_code == HTTP_RATE_LIMIT:
+                wait_time = RATE_LIMIT_DELAY
+            else:
+                wait_time = HTTP_BACKOFF[min(attempt, len(HTTP_BACKOFF) - 1)]
+
+            print(f"  [INFO] Waiting {wait_time}s before retry ({attempt + 1}/{HTTP_RETRIES})...")
+            time.sleep(wait_time)
+
+        except requests.exceptions.Timeout:
+            _diagnose_provider(subreddit, provider, "timeout", "Request timed out")
+            if attempt < HTTP_RETRIES - 1:
+                time.sleep(HTTP_BACKOFF[min(attempt, len(HTTP_BACKOFF) - 1)])
+            else:
+                return []
+        except requests.exceptions.RequestException as e:
+            _diagnose_provider(subreddit, provider, "connection-error", str(e)[:100])
+            return []
+
+    return []
 
 
 def _fetch_with_scraperapi(subreddit):
