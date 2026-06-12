@@ -45,6 +45,20 @@ GEMINI_MODEL   = "gemini-2.5-flash"
 GEMINI_RETRIES = 3
 GEMINI_BACKOFF = [15, 45, 90]        # seconds to wait before each retry (max 3 attempts)
 
+# ── Rate Limiting & Retry Config ─────────────────────────────────────────────
+HTTP_RETRIES     = 3
+HTTP_BACKOFF     = [5, 15, 30]       # seconds for HTTP retry backoff
+RATE_LIMIT_DELAY = 60                # seconds to wait on 429 before retry
+
+# HTTP Status Codes
+HTTP_OK         = 200
+HTTP_BAD_REQUEST    = 400
+HTTP_UNAUTHORIZED   = 401
+HTTP_FORBIDDEN      = 403
+HTTP_NOT_FOUND      = 404
+HTTP_RATE_LIMIT     = 429
+HTTP_SERVER_ERROR   = 500
+
 HEADERS = {
     "User-Agent": "DeltaAgent/1.0 (+https://github.com/infinityempire/delta-agent) "
                   "market-intelligence; contact: configured-repo-owner",
@@ -107,6 +121,75 @@ def _diagnose_provider(subreddit, provider, status, detail=""):
     suffix = f": {safe_detail}" if safe_detail else ""
     level = "OK" if status == "ok" else "WARN"
     print(f"  [{level}] r/{subreddit}: {provider} {status}{suffix}")
+
+
+def _get_status_error_name(status_code):
+    """Return human-readable name for HTTP status codes"""
+    status_names = {
+        HTTP_BAD_REQUEST: "Bad Request",
+        HTTP_UNAUTHORIZED: "Unauthorized",
+        HTTP_FORBIDDEN: "Forbidden",
+        HTTP_NOT_FOUND: "Not Found",
+        HTTP_RATE_LIMIT: "Rate Limited",
+        HTTP_SERVER_ERROR: "Server Error",
+    }
+    return status_names.get(status_code, f"HTTP {status_code}")
+
+
+def _should_retry(status_code):
+    """Determine if a status code warrants a retry"""
+    return status_code in (
+        HTTP_RATE_LIMIT,
+        HTTP_SERVER_ERROR,
+        502, 503, 504,  # Gateway/Service unavailable
+    )
+
+
+def _handle_http_error(subreddit, provider, status_code, attempt, max_retries):
+    """Handle HTTP errors with appropriate messaging and retry logic"""
+    error_name = _get_status_error_name(status_code)
+    
+    if status_code == HTTP_UNAUTHORIZED:
+        _diagnose_provider(
+            subreddit, provider, "auth-error",
+            f"{error_name} - Check API key validity"
+        )
+        return False  # Don't retry auth errors
+    
+    elif status_code == HTTP_BAD_REQUEST:
+        _diagnose_provider(
+            subreddit, provider, "bad-request",
+            f"{error_name} - Request validation failed"
+        )
+        return False  # Don't retry bad requests
+    
+    elif status_code == HTTP_FORBIDDEN:
+        _diagnose_provider(
+            subreddit, provider, "forbidden",
+            f"{error_name} - Access denied, check permissions"
+        )
+        return False  # Don't retry forbidden
+    
+    elif status_code == HTTP_RATE_LIMIT:
+        _diagnose_provider(
+            subreddit, provider, "rate-limited",
+            f"{error_name} - Waiting {RATE_LIMIT_DELAY}s before retry"
+        )
+        return True  # Retry after delay
+    
+    elif status_code >= HTTP_SERVER_ERROR:
+        _diagnose_provider(
+            subreddit, provider, "server-error",
+            f"{error_name} - Will retry" if attempt < max_retries - 1 else f"{error_name} - Max retries reached"
+        )
+        return attempt < max_retries - 1  # Retry if we have attempts left
+    
+    else:
+        _diagnose_provider(
+            subreddit, provider, "http-error",
+            f"HTTP {status_code}"
+        )
+        return False
 
 
 def _normalize_post(subreddit, title, body, url, author=""):
@@ -222,38 +305,104 @@ def _posts_from_jina_markdown(subreddit, markdown_text):
 
 
 def _scrapingbee_get(subreddit, provider, target_url, render_js="false"):
-    resp = HTTP.get(
-        "https://app.scrapingbee.com/api/v1/",
-        params={
-            "api_key": SCRAPINGBEE_API_KEY,
-            "url": target_url,
-            "render_js": render_js,
-            "premium_proxy": "true",
-            "country_code": "us",
-        },
-        timeout=REQUEST_TIMEOUT,
-    )
-    if resp.status_code != 200:
-        _diagnose_provider(subreddit, provider, "http-error", f"HTTP {resp.status_code}")
-        return None
-    return resp
+    """Fetch URL via ScrapingBee with retry and backoff"""
+    for attempt in range(HTTP_RETRIES):
+        try:
+            resp = HTTP.get(
+                "https://app.scrapingbee.com/api/v1/",
+                params={
+                    "api_key": SCRAPINGBEE_API_KEY,
+                    "url": target_url,
+                    "render_js": render_js,
+                    "premium_proxy": "true",
+                    "country_code": "us",
+                },
+                timeout=REQUEST_TIMEOUT,
+            )
+            
+            if resp.status_code == HTTP_OK:
+                return resp
+            
+            # Handle error with retry logic
+            should_retry = _handle_http_error(
+                subreddit, provider, resp.status_code, attempt, HTTP_RETRIES
+            )
+            
+            if not should_retry:
+                return None
+            
+            # Apply backoff delay
+            if resp.status_code == HTTP_RATE_LIMIT:
+                wait_time = RATE_LIMIT_DELAY
+            else:
+                wait_time = HTTP_BACKOFF[min(attempt, len(HTTP_BACKOFF) - 1)]
+            
+            print(f"  [INFO] Waiting {wait_time}s before retry ({attempt + 1}/{HTTP_RETRIES})...")
+            time.sleep(wait_time)
+            
+        except requests.exceptions.Timeout:
+            _diagnose_provider(subreddit, provider, "timeout", "Request timed out")
+            if attempt < HTTP_RETRIES - 1:
+                wait_time = HTTP_BACKOFF[min(attempt, len(HTTP_BACKOFF) - 1)]
+                print(f"  [INFO] Retrying after timeout ({attempt + 1}/{HTTP_RETRIES})...")
+                time.sleep(wait_time)
+            else:
+                return None
+        except requests.exceptions.RequestException as e:
+            _diagnose_provider(subreddit, provider, "connection-error", str(e)[:100])
+            return None
+    
+    return None
 
 
 def _scraperapi_get(subreddit, provider, target_url, render="false"):
-    resp = HTTP.get(
-        "http://api.scraperapi.com",
-        params={
-            "api_key": SCRAPER_API_KEY,
-            "url": target_url,
-            "country_code": "us",
-            "render": render,
-        },
-        timeout=REQUEST_TIMEOUT,
-    )
-    if resp.status_code != 200:
-        _diagnose_provider(subreddit, provider, "http-error", f"HTTP {resp.status_code}")
-        return None
-    return resp
+    """Fetch URL via ScraperAPI with retry and backoff"""
+    for attempt in range(HTTP_RETRIES):
+        try:
+            resp = HTTP.get(
+                "http://api.scraperapi.com",
+                params={
+                    "api_key": SCRAPER_API_KEY,
+                    "url": target_url,
+                    "country_code": "us",
+                    "render": render,
+                },
+                timeout=REQUEST_TIMEOUT,
+            )
+            
+            if resp.status_code == HTTP_OK:
+                return resp
+            
+            # Handle error with retry logic
+            should_retry = _handle_http_error(
+                subreddit, provider, resp.status_code, attempt, HTTP_RETRIES
+            )
+            
+            if not should_retry:
+                return None
+            
+            # Apply backoff delay
+            if resp.status_code == HTTP_RATE_LIMIT:
+                wait_time = RATE_LIMIT_DELAY
+            else:
+                wait_time = HTTP_BACKOFF[min(attempt, len(HTTP_BACKOFF) - 1)]
+            
+            print(f"  [INFO] Waiting {wait_time}s before retry ({attempt + 1}/{HTTP_RETRIES})...")
+            time.sleep(wait_time)
+            
+        except requests.exceptions.Timeout:
+            _diagnose_provider(subreddit, provider, "timeout", "Request timed out")
+            if attempt < HTTP_RETRIES - 1:
+                wait_time = HTTP_BACKOFF[min(attempt, len(HTTP_BACKOFF) - 1)]
+                print(f"  [INFO] Retrying after timeout ({attempt + 1}/{HTTP_RETRIES})...")
+                time.sleep(wait_time)
+            else:
+                return None
+        except requests.exceptions.RequestException as e:
+            _diagnose_provider(subreddit, provider, "connection-error", str(e)[:100])
+            return None
+    
+    return None
 
 
 def _fetch_with_scrapingbee(subreddit):
@@ -342,69 +491,175 @@ def _fetch_with_scraperapi_old_html(subreddit):
 
 
 def _fetch_with_jina_reader(subreddit):
+    """Fetch posts via Jina Reader with retry and backoff"""
     provider = "Jina Reader old Reddit"
     reader_url = f"https://r.jina.ai/https://old.reddit.com/r/{subreddit}/new/"
-    resp = HTTP.get(reader_url, timeout=REQUEST_TIMEOUT)
-    if resp.status_code != 200:
-        _diagnose_provider(subreddit, provider, "http-error", f"HTTP {resp.status_code}")
-        return []
-    posts = _posts_from_jina_markdown(subreddit, resp.text)
-    _diagnose_provider(subreddit, provider, "ok", f"{len(posts)} usable posts")
-    return posts
+    
+    for attempt in range(HTTP_RETRIES):
+        try:
+            resp = HTTP.get(reader_url, timeout=REQUEST_TIMEOUT)
+            
+            if resp.status_code == HTTP_OK:
+                posts = _posts_from_jina_markdown(subreddit, resp.text)
+                _diagnose_provider(subreddit, provider, "ok", f"{len(posts)} usable posts")
+                return posts
+            
+            should_retry = _handle_http_error(
+                subreddit, provider, resp.status_code, attempt, HTTP_RETRIES
+            )
+            
+            if not should_retry:
+                return []
+            
+            wait_time = HTTP_BACKOFF[min(attempt, len(HTTP_BACKOFF) - 1)]
+            print(f"  [INFO] Waiting {wait_time}s before retry ({attempt + 1}/{HTTP_RETRIES})...")
+            time.sleep(wait_time)
+            
+        except requests.exceptions.Timeout:
+            _diagnose_provider(subreddit, provider, "timeout", "Request timed out")
+            if attempt < HTTP_RETRIES - 1:
+                time.sleep(HTTP_BACKOFF[min(attempt, len(HTTP_BACKOFF) - 1)])
+            else:
+                return []
+        except requests.exceptions.RequestException as e:
+            _diagnose_provider(subreddit, provider, "connection-error", str(e)[:100])
+            return []
+    
+    return []
 
 
 def _fetch_with_reddit_json(subreddit):
+    """Fetch posts via Reddit JSON API with retry and backoff"""
     provider = "Reddit JSON"
     reddit_url = f"https://www.reddit.com/r/{subreddit}/new.json?raw_json=1&limit={POSTS_PER_SUB}"
-    resp = HTTP.get(reddit_url, timeout=REQUEST_TIMEOUT)
-    if resp.status_code != 200:
-        _diagnose_provider(subreddit, provider, "http-error", f"HTTP {resp.status_code}")
-        return []
-    posts = _posts_from_reddit_json(subreddit, _json_from_response(resp, subreddit, provider))
-    _diagnose_provider(subreddit, provider, "ok", f"{len(posts)} usable posts")
-    return posts
+    
+    for attempt in range(HTTP_RETRIES):
+        try:
+            resp = HTTP.get(reddit_url, timeout=REQUEST_TIMEOUT)
+            
+            if resp.status_code == HTTP_OK:
+                posts = _posts_from_reddit_json(subreddit, _json_from_response(resp, subreddit, provider))
+                _diagnose_provider(subreddit, provider, "ok", f"{len(posts)} usable posts")
+                return posts
+            
+            should_retry = _handle_http_error(
+                subreddit, provider, resp.status_code, attempt, HTTP_RETRIES
+            )
+            
+            if not should_retry:
+                return []
+            
+            wait_time = HTTP_BACKOFF[min(attempt, len(HTTP_BACKOFF) - 1)]
+            print(f"  [INFO] Waiting {wait_time}s before retry ({attempt + 1}/{HTTP_RETRIES})...")
+            time.sleep(wait_time)
+            
+        except requests.exceptions.Timeout:
+            _diagnose_provider(subreddit, provider, "timeout", "Request timed out")
+            if attempt < HTTP_RETRIES - 1:
+                time.sleep(HTTP_BACKOFF[min(attempt, len(HTTP_BACKOFF) - 1)])
+            else:
+                return []
+        except requests.exceptions.RequestException as e:
+            _diagnose_provider(subreddit, provider, "connection-error", str(e)[:100])
+            return []
+    
+    return []
 
 
 def _fetch_with_reddit_rss(subreddit):
+    """Fetch posts via Reddit RSS with retry and backoff"""
     provider = "Reddit RSS"
     rss_url = f"https://www.reddit.com/r/{subreddit}/new/.rss?limit={POSTS_PER_SUB}"
-    resp = HTTP.get(rss_url, timeout=REQUEST_TIMEOUT)
-    if resp.status_code != 200:
-        _diagnose_provider(subreddit, provider, "http-error", f"HTTP {resp.status_code}")
-        return []
-
-    root = ET.fromstring(resp.content)
-    ns = {"atom": "http://www.w3.org/2005/Atom"}
-    posts = []
-    for entry in root.findall("atom:entry", ns):
-        title = entry.findtext("atom:title", default="", namespaces=ns)
-        body = entry.findtext("atom:content", default="", namespaces=ns)
-        author = entry.findtext("atom:author/atom:name", default="", namespaces=ns)
-        link = entry.find("atom:link", ns)
-        url = link.get("href", "") if link is not None else ""
-        normalized = _normalize_post(
-            subreddit=subreddit,
-            title=title,
-            body=body,
-            url=url,
-            author=author,
-        )
-        if normalized:
-            posts.append(normalized)
-    _diagnose_provider(subreddit, provider, "ok", f"{len(posts)} usable posts")
-    return posts
+    
+    for attempt in range(HTTP_RETRIES):
+        try:
+            resp = HTTP.get(rss_url, timeout=REQUEST_TIMEOUT)
+            
+            if resp.status_code == HTTP_OK:
+                root = ET.fromstring(resp.content)
+                ns = {"atom": "http://www.w3.org/2005/Atom"}
+                posts = []
+                for entry in root.findall("atom:entry", ns):
+                    title = entry.findtext("atom:title", default="", namespaces=ns)
+                    body = entry.findtext("atom:content", default="", namespaces=ns)
+                    author = entry.findtext("atom:author/atom:name", default="", namespaces=ns)
+                    link = entry.find("atom:link", ns)
+                    url = link.get("href", "") if link is not None else ""
+                    normalized = _normalize_post(
+                        subreddit=subreddit,
+                        title=title,
+                        body=body,
+                        url=url,
+                        author=author,
+                    )
+                    if normalized:
+                        posts.append(normalized)
+                _diagnose_provider(subreddit, provider, "ok", f"{len(posts)} usable posts")
+                return posts
+            
+            should_retry = _handle_http_error(
+                subreddit, provider, resp.status_code, attempt, HTTP_RETRIES
+            )
+            
+            if not should_retry:
+                return []
+            
+            wait_time = HTTP_BACKOFF[min(attempt, len(HTTP_BACKOFF) - 1)]
+            print(f"  [INFO] Waiting {wait_time}s before retry ({attempt + 1}/{HTTP_RETRIES})...")
+            time.sleep(wait_time)
+            
+        except requests.exceptions.Timeout:
+            _diagnose_provider(subreddit, provider, "timeout", "Request timed out")
+            if attempt < HTTP_RETRIES - 1:
+                time.sleep(HTTP_BACKOFF[min(attempt, len(HTTP_BACKOFF) - 1)])
+            else:
+                return []
+        except requests.exceptions.RequestException as e:
+            _diagnose_provider(subreddit, provider, "connection-error", str(e)[:100])
+            return []
+        except ET.ParseError as e:
+            _diagnose_provider(subreddit, provider, "parse-error", f"RSS parse error: {str(e)[:50]}")
+            return []
+    
+    return []
 
 
 def _fetch_with_old_reddit_html(subreddit):
+    """Fetch posts via old Reddit HTML with retry and backoff"""
     provider = "Old Reddit HTML"
     reddit_url = f"https://old.reddit.com/r/{subreddit}/new/"
-    resp = HTTP.get(reddit_url, timeout=REQUEST_TIMEOUT)
-    if resp.status_code != 200:
-        _diagnose_provider(subreddit, provider, "http-error", f"HTTP {resp.status_code}")
-        return []
-    posts = _posts_from_old_reddit_html(subreddit, resp.text)
-    _diagnose_provider(subreddit, provider, "ok", f"{len(posts)} usable posts")
-    return posts
+    
+    for attempt in range(HTTP_RETRIES):
+        try:
+            resp = HTTP.get(reddit_url, timeout=REQUEST_TIMEOUT)
+            
+            if resp.status_code == HTTP_OK:
+                posts = _posts_from_old_reddit_html(subreddit, resp.text)
+                _diagnose_provider(subreddit, provider, "ok", f"{len(posts)} usable posts")
+                return posts
+            
+            should_retry = _handle_http_error(
+                subreddit, provider, resp.status_code, attempt, HTTP_RETRIES
+            )
+            
+            if not should_retry:
+                return []
+            
+            wait_time = HTTP_BACKOFF[min(attempt, len(HTTP_BACKOFF) - 1)]
+            print(f"  [INFO] Waiting {wait_time}s before retry ({attempt + 1}/{HTTP_RETRIES})...")
+            time.sleep(wait_time)
+            
+        except requests.exceptions.Timeout:
+            _diagnose_provider(subreddit, provider, "timeout", "Request timed out")
+            if attempt < HTTP_RETRIES - 1:
+                time.sleep(HTTP_BACKOFF[min(attempt, len(HTTP_BACKOFF) - 1)])
+            else:
+                return []
+        except requests.exceptions.RequestException as e:
+            _diagnose_provider(subreddit, provider, "connection-error", str(e)[:100])
+            return []
+    
+    return []
 
 
 raw_posts = []
