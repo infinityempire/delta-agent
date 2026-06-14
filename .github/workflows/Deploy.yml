@@ -25,13 +25,6 @@ jobs:
       - name: Install dependencies
         run: npm install
 
-      - name: Restore Hugging Face secret
-        run: |
-          echo "⚡ Restoring Hugging Face token..."
-          echo "VITE_HF_TOKEN=${{ secrets.VITE_HF_TOKEN }}" >> $GITHUB_ENV
-          # If you prefer the read-only token instead:
-          # echo "VITE_HF_READ_TOKEN=${{ secrets.VITE_HF_READ_TOKEN }}" >> $GITHUB_ENV
-          echo "✅ Token available in this job"
 
       - name: Build project
         run: npm run build
