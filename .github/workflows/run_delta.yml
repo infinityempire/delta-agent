@@ -13,7 +13,7 @@ on:
 jobs:
   run-delta:
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 30  # Increased from 15 to accommodate fallback buffers
 
     steps:
       - name: Checkout repository

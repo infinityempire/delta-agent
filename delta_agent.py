@@ -23,6 +23,10 @@ from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
 from email.mime.base import MIMEBase
 from email import encoders
+from dotenv import load_dotenv
+
+# Load environment variables from .env file
+load_dotenv()
 
 # ── Environment Variables ────────────────────────────────────────────────────
 GEMINI_API_KEY  = os.environ.get("GEMINI_API_KEY", "")
@@ -148,6 +152,7 @@ def _should_retry(status_code):
 def _handle_http_error(subreddit, provider, status_code, attempt, max_retries):
     """Handle HTTP errors with appropriate messaging and retry logic"""
     error_name = _get_status_error_name(status_code)
+    is_final_attempt = attempt >= max_retries - 1
     
     if status_code == HTTP_UNAUTHORIZED:
         _diagnose_provider(
@@ -171,11 +176,19 @@ def _handle_http_error(subreddit, provider, status_code, attempt, max_retries):
         return False  # Don't retry forbidden
     
     elif status_code == HTTP_RATE_LIMIT:
-        _diagnose_provider(
-            subreddit, provider, "rate-limited",
-            f"{error_name} - Waiting {RATE_LIMIT_DELAY}s before retry"
-        )
-        return True  # Retry after delay
+        if is_final_attempt:
+            # FIX: On final attempt with 429, fail gracefully - do NOT return True
+            _diagnose_provider(
+                subreddit, provider, "rate-limited",
+                f"{error_name} - Final attempt, giving up after {max_retries} tries"
+            )
+            return False
+        else:
+            _diagnose_provider(
+                subreddit, provider, "rate-limited",
+                f"{error_name} - Waiting {RATE_LIMIT_DELAY}s before retry"
+            )
+            return True  # Retry after delay
     
     elif status_code >= HTTP_SERVER_ERROR:
         _diagnose_provider(
@@ -349,8 +362,15 @@ def _scrapingbee_get(subreddit, provider, target_url, render_js="false"):
             else:
                 return None
         except requests.exceptions.RequestException as e:
+            # FIX: Transient errors (connection reset, DNS failures) should retry
+            # instead of aborting immediately
             _diagnose_provider(subreddit, provider, "connection-error", str(e)[:100])
-            return None
+            if attempt < HTTP_RETRIES - 1:
+                wait_time = HTTP_BACKOFF[min(attempt, len(HTTP_BACKOFF) - 1)]
+                print(f"  [INFO] Retrying after connection error ({attempt + 1}/{HTTP_RETRIES})...")
+                time.sleep(wait_time)
+            else:
+                return None
     
     return None
 
@@ -399,8 +419,15 @@ def _scraperapi_get(subreddit, provider, target_url, render="false"):
             else:
                 return None
         except requests.exceptions.RequestException as e:
+            # FIX: Transient errors (connection reset, DNS failures) should retry
+            # instead of aborting immediately
             _diagnose_provider(subreddit, provider, "connection-error", str(e)[:100])
-            return None
+            if attempt < HTTP_RETRIES - 1:
+                wait_time = HTTP_BACKOFF[min(attempt, len(HTTP_BACKOFF) - 1)]
+                print(f"  [INFO] Retrying after connection error ({attempt + 1}/{HTTP_RETRIES})...")
+                time.sleep(wait_time)
+            else:
+                return None
     
     return None
 
@@ -485,8 +512,15 @@ def _fetch_with_scrapingbee_rendered_markdown(subreddit):
             else:
                 return []
         except requests.exceptions.RequestException as e:
+            # FIX: Transient errors (connection reset, DNS failures) should retry
+            # instead of aborting immediately
             _diagnose_provider(subreddit, provider, "connection-error", str(e)[:100])
-            return []
+            if attempt < HTTP_RETRIES - 1:
+                wait_time = HTTP_BACKOFF[min(attempt, len(HTTP_BACKOFF) - 1)]
+                print(f"  [INFO] Retrying after connection error ({attempt + 1}/{HTTP_RETRIES})...")
+                time.sleep(wait_time)
+            else:
+                return []
 
     return []
 
@@ -551,8 +585,15 @@ def _fetch_with_jina_reader(subreddit):
             else:
                 return []
         except requests.exceptions.RequestException as e:
+            # FIX: Transient errors (connection reset, DNS failures) should retry
+            # instead of aborting immediately
             _diagnose_provider(subreddit, provider, "connection-error", str(e)[:100])
-            return []
+            if attempt < HTTP_RETRIES - 1:
+                wait_time = HTTP_BACKOFF[min(attempt, len(HTTP_BACKOFF) - 1)]
+                print(f"  [INFO] Retrying after connection error ({attempt + 1}/{HTTP_RETRIES})...")
+                time.sleep(wait_time)
+            else:
+                return []
     
     return []
 
@@ -589,8 +630,15 @@ def _fetch_with_reddit_json(subreddit):
             else:
                 return []
         except requests.exceptions.RequestException as e:
+            # FIX: Transient errors (connection reset, DNS failures) should retry
+            # instead of aborting immediately
             _diagnose_provider(subreddit, provider, "connection-error", str(e)[:100])
-            return []
+            if attempt < HTTP_RETRIES - 1:
+                wait_time = HTTP_BACKOFF[min(attempt, len(HTTP_BACKOFF) - 1)]
+                print(f"  [INFO] Retrying after connection error ({attempt + 1}/{HTTP_RETRIES})...")
+                time.sleep(wait_time)
+            else:
+                return []
     
     return []
 
@@ -644,8 +692,15 @@ def _fetch_with_reddit_rss(subreddit):
             else:
                 return []
         except requests.exceptions.RequestException as e:
+            # FIX: Transient errors (connection reset, DNS failures) should retry
+            # instead of aborting immediately
             _diagnose_provider(subreddit, provider, "connection-error", str(e)[:100])
-            return []
+            if attempt < HTTP_RETRIES - 1:
+                wait_time = HTTP_BACKOFF[min(attempt, len(HTTP_BACKOFF) - 1)]
+                print(f"  [INFO] Retrying after connection error ({attempt + 1}/{HTTP_RETRIES})...")
+                time.sleep(wait_time)
+            else:
+                return []
         except ET.ParseError as e:
             _diagnose_provider(subreddit, provider, "parse-error", f"RSS parse error: {str(e)[:50]}")
             return []
@@ -685,8 +740,15 @@ def _fetch_with_old_reddit_html(subreddit):
             else:
                 return []
         except requests.exceptions.RequestException as e:
+            # FIX: Transient errors (connection reset, DNS failures) should retry
+            # instead of aborting immediately
             _diagnose_provider(subreddit, provider, "connection-error", str(e)[:100])
-            return []
+            if attempt < HTTP_RETRIES - 1:
+                wait_time = HTTP_BACKOFF[min(attempt, len(HTTP_BACKOFF) - 1)]
+                print(f"  [INFO] Retrying after connection error ({attempt + 1}/{HTTP_RETRIES})...")
+                time.sleep(wait_time)
+            else:
+                return []
     
     return []
 
