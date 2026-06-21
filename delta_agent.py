@@ -986,6 +986,13 @@ try:
 
 except Exception as e:
     print(f"[ERROR] Email delivery failed: {e}")
+    # Write failure marker to output for notification tracking
+    with open(f"{OUTPUT_DIR}/email_failure.json", "w") as f:
+        json.dump({
+            "error": str(e),
+            "type": "email_delivery_failed",
+            "timestamp": datetime.now(timezone.utc).isoformat()
+        }, f)
 
 # ── Done ──────────────────────────────────────────────────────────────────────
 print("\n" + "=" * 60)
@@ -993,5 +1000,19 @@ print("DELTA AGENT – Run Complete")
 print(f"Posts scanned : {len(raw_posts)}")
 print(f"Intent opportunities: {len(leads)}")
 print(f"Report saved  : {REPORT_PATH}")
+print(f"Email sent    : {email_sent}")
 print("=" * 60)
-sys.exit(0 if email_sent else 1)
+
+# Provide diagnostic summary for debugging
+if provider_diagnostics:
+    failed_providers = [p for p in provider_diagnostics if p["status"] != "ok"]
+    if failed_providers:
+        print(f"\n[DIAGNOSTIC] {len(failed_providers)} provider(s) had issues:")
+        for p in failed_providers[:5]:  # Show first 5
+            print(f"  - {p['provider']} on r/{p['subreddit']}: {p['status']} - {p['detail']}")
+
+# Exit with failure only if critical components failed
+if not email_sent:
+    print("\n[CRITICAL] Email delivery failed - workflow will be marked as failed")
+    sys.exit(1)
+sys.exit(0)

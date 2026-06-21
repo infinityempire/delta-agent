@@ -51,3 +51,14 @@ jobs:
           name: delta-execution-report
           path: output/
           if-no-files-found: warn
+
+      - name: Notify on workflow failure
+        if: failure()
+        run: |
+          echo "::notice title=Delta Agent Failure::The Delta Agent workflow has failed. Check the run logs for details."
+          echo "::error title=Delta Agent Failed::The scheduled Delta Agent run has failed. Please check GitHub Actions logs for more information."
+
+      - name: Success notification
+        if: success()
+        run: |
+          echo "::notice title=Delta Agent Success::The Delta Agent completed successfully."
