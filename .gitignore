@@ -1,5 +1,9 @@
 logs/
 node_modules/
+__pycache__/
+
+# Environment variables - NEVER commit sensitive data
+.env
 
 # ignore logs but keep diagnostics
 logs/*
