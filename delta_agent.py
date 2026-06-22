@@ -45,7 +45,7 @@ MAX_BODY_CHARS = 800   # trimmed to save Gemini tokens
 TOP_LEADS      = 10
 OUTPUT_DIR     = "output"
 REPORT_PATH    = f"{OUTPUT_DIR}/execution_report.json"
-GEMINI_MODEL   = "gemini-1.5-flash"
+GEMINI_MODEL   = "gemini-2.5-flash"
 GEMINI_RETRIES = 3
 GEMINI_BACKOFF = [15, 45, 90]        # seconds to wait before each retry (max 3 attempts)
 
