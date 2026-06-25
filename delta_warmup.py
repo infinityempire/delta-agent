@@ -10,9 +10,9 @@ Strategy:
 import os, sys, time, random, json
 from datetime import datetime
 
-USERNAME   = os.environ.get("REDDIT_USERNAME", "")
-PASSWORD   = os.environ.get("REDDIT_PASSWORD", "")
-OPENAI_KEY = os.environ.get("OPENAI_API_KEY", "")
+USERNAME    = os.environ.get("REDDIT_USERNAME", "")
+PASSWORD    = os.environ.get("REDDIT_PASSWORD", "")
+GEMINI_KEY  = os.environ.get("GEMINI_API_KEY", "")
 
 GECKODRIVER_PATH = "/data/data/com.termux/files/usr/bin/geckodriver"
 FIREFOX_PATH     = "/data/data/com.termux/files/usr/bin/firefox"
@@ -42,35 +42,29 @@ def log(msg):
     print(f"[{datetime.now().strftime('%H:%M:%S')}] {msg}", flush=True)
 
 def generate_ai_comment(post_title, post_text):
-    if not OPENAI_KEY:
-        log("⚠️ OPENAI_API_KEY not set. Cannot generate AI comment.")
+    """Call Gemini API via direct HTTP (no google-generativeai library needed)."""
+    if not GEMINI_KEY:
+        log("⚠️ GEMINI_API_KEY not set.")
         return None
 
     try:
         import requests
-        headers = {
-            "Authorization": f"Bearer {OPENAI_KEY}",
-            "Content-Type": "application/json"
-        }
+        url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key={GEMINI_KEY}"
+        prompt = f"{SYSTEM_PROMPT}\n\nTitle: {post_title}\n\nBody: {post_text[:1000]}"
         payload = {
-            "model": "gpt-4o-mini",
-            "messages": [
-                {"role": "system", "content": SYSTEM_PROMPT},
-                {"role": "user", "content": f"Title: {post_title}\n\nBody: {post_text[:1000]}"}
-            ],
-            "temperature": 0.7,
-            "max_tokens": 150
+            "contents": [{"parts": [{"text": prompt}]}],
+            "generationConfig": {"temperature": 0.7, "maxOutputTokens": 150}
         }
-        r = requests.post("https://api.openai.com/v1/chat/completions", json=payload, headers=headers, timeout=20)
+        r = requests.post(url, json=payload, timeout=20)
         if r.status_code == 200:
-            text = r.json()["choices"][0]["message"]["content"].strip()
+            text = r.json()["candidates"][0]["content"]["parts"][0]["text"].strip()
             if text == "IRRELEVANT":
                 return None
             return text
         else:
-            log(f"⚠️ OpenAI error: {r.status_code} {r.text}")
+            log(f"⚠️ Gemini error: {r.status_code} {r.text[:200]}")
     except Exception as e:
-        log(f"⚠️ OpenAI exception: {e}")
+        log(f"⚠️ Gemini exception: {e}")
     return None
 
 def selenium_login():
@@ -221,8 +215,8 @@ def main():
     print("=" * 60)
     print()
 
-    if not USERNAME or not PASSWORD or not OPENAI_KEY:
-        print("❌ Set REDDIT_USERNAME, REDDIT_PASSWORD, and OPENAI_API_KEY!")
+    if not USERNAME or not PASSWORD or not GEMINI_KEY:
+        print("❌ Set REDDIT_USERNAME, REDDIT_PASSWORD, and GEMINI_API_KEY!")
         sys.exit(1)
 
     cookies = selenium_login()
