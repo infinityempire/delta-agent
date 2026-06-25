@@ -1,0 +1,11 @@
+# Delta Agent - REST API Client for Embedded/Mobile Linux
+# Core dependency for TLS/JA3 fingerprinting
+curl_cffi>=0.7.0
+
+# Async runtime (included with Python 3.10+, but listed for clarity)
+# asyncio is built into Python 3.4+
+
+# Testing (optional)
+pytest>=7.4.0
+pytest-asyncio>=0.21.0
+pytest-cov>=4.1.0

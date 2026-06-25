@@ -1,0 +1,83 @@
+[build-system]
+requires = ["setuptools>=68.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "delta-agent"
+version = "0.1.0"
+description = "Async REST API Client for Embedded/Mobile Linux with TLS fingerprinting"
+readme = "README.md"
+license = {text = "MIT"}
+authors = [
+    {name = "Delta Agent Team", email = "team@delta-agent.dev"}
+]
+keywords = [
+    "api",
+    "client",
+    "rest",
+    "async",
+    "curl_cffi",
+    "tls",
+    "fingerprint",
+    "embedded",
+    "mobile",
+    "termux",
+    "arm",
+]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: POSIX :: Linux",
+    "Operating System :: Android :: Other",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Internet :: WWW/HTTP",
+    "Topic :: System :: Networking",
+    "Typing :: Typed",
+]
+requires-python = ">=3.10"
+dependencies = [
+    "curl_cffi>=0.7.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=7.4.0",
+    "pytest-asyncio>=0.21.0",
+    "pytest-cov>=4.1.0",
+    "ruff>=0.1.0",
+    "mypy>=1.7.0",
+]
+
+[project.urls]
+Homepage = "https://github.com/infinityempire/delta-agent"
+Documentation = "https://github.com/infinityempire/delta-agent#readme"
+Repository = "https://github.com/infinityempire/delta-agent"
+Issues = "https://github.com/infinityempire/delta-agent/issues"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["delta_agent*"]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]
+python_files = ["test_*.py"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py310"
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "UP"]
+ignore = ["E501"]
+
+[tool.mypy]
+python_version = "3.10"
+strict = true
+warn_return_any = true
+warn_unused_configs = true
