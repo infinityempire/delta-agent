@@ -30,10 +30,12 @@ def print_error(message):
     print(f"{Colors.RED}✗ {message}{Colors.RESET}")
     sys.exit(1)
 
-def run_command(cmd, check=True):
-    """Run a shell command"""
+def run_command(cmd, check=True, cwd=None):
+    """Run a shell command safely using list args"""
     try:
-        result = subprocess.run(cmd, shell=True, check=check, capture_output=True, text=True)
+        if isinstance(cmd, str):
+            cmd = cmd.split()
+        result = subprocess.run(cmd, shell=False, check=check, capture_output=True, text=True, cwd=cwd)
         return result.returncode == 0
     except Exception as e:
         print_error(f"Failed to run command: {e}")
@@ -57,7 +59,7 @@ def main():
     print_step(2, 8, "Checking OpenManus repository")
     if not Path("OpenManus").exists():
         print("Repository not found. Cloning...")
-        if not run_command("git clone https://github.com/FoundationAgents/OpenManus.git"):
+        if not run_command(["git", "clone", "https://github.com/FoundationAgents/OpenManus.git"]):
             print_error("Failed to clone repository")
         print_success("Repository cloned")
     else:
@@ -71,7 +73,7 @@ def main():
     print_step(3, 8, "Creating virtual environment")
     venv_path = Path("venv")
     if not venv_path.exists():
-        if not run_command(f"{sys.executable} -m venv venv"):
+        if not run_command([sys.executable, "-m", "venv", "venv"]):
             print_error("Failed to create virtual environment")
         print_success("Virtual environment created")
     else:
@@ -91,21 +93,21 @@ def main():
     
     # Step 5: Upgrade pip
     print_step(5, 8, "Upgrading pip")
-    if not run_command(f"{pip_cmd} install --upgrade pip"):
+    if not run_command([pip_cmd, "install", "--upgrade", "pip"]):
         print_error("Failed to upgrade pip")
     print_success("Pip upgraded")
     print()
     
     # Step 6: Install dependencies
     print_step(6, 8, "Installing dependencies (this may take 5-10 minutes)")
-    if not run_command(f"{pip_cmd} install -r requirements.txt"):
+    if not run_command([pip_cmd, "install", "-r", "requirements.txt"]):
         print_error("Failed to install dependencies")
     print_success("Dependencies installed")
     print()
     
     # Step 7: Install Playwright
     print_step(7, 8, "Installing Playwright browsers")
-    if not run_command(f"{python_cmd} -m playwright install"):
+    if not run_command([python_cmd, "-m", "playwright", "install"]):
         print("Warning: Playwright installation had issues, but continuing...")
     else:
         print_success("Playwright browsers installed")
