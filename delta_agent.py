@@ -892,28 +892,28 @@ No discussion angle captured because there were no posts to analyze.
 else:
     _gclient = genai_new.Client(api_key=GEMINI_API_KEY)
 
-for attempt in range(GEMINI_RETRIES if not scraping_failed else 0):
-    try:
-        print(f"  [INFO] Gemini attempt {attempt + 1}/{GEMINI_RETRIES}...")
-        response = _gclient.models.generate_content(model=GEMINI_MODEL, contents=prompt)
-        sprint_report_md = response.text.strip()
-        if not sprint_report_md.startswith("# 📊 Reddit Intent Intelligence Sprint Report"):
-            raise ValueError("Gemini response did not match the required sprint report markdown format")
-        high_intent_section = sprint_report_md.split("### 3. 📈 Hot Discussion Angle", 1)[0]
-        leads = [
-            line for line in high_intent_section.splitlines()
-            if line.startswith("> **Subreddit:**")
-        ]
-        print(f"[OK] Gemini returned sprint report with {len(leads)} intent opportunities")
-        gemini_ok = True
-        break
-    except Exception as e:
-        err_str = str(e)
-        print(f"  [ERROR] Attempt {attempt + 1} failed: {type(e).__name__}: {err_str[:200]}")
-        if attempt < GEMINI_RETRIES - 1:
-            wait = GEMINI_BACKOFF[attempt]
-            print(f"  [INFO] Waiting {wait}s before retry...")
-            time.sleep(wait)
+    for attempt in range(GEMINI_RETRIES if not scraping_failed else 0):
+        try:
+            print(f"  [INFO] Gemini attempt {attempt + 1}/{GEMINI_RETRIES}...")
+            response = _gclient.models.generate_content(model=GEMINI_MODEL, contents=prompt)
+            sprint_report_md = response.text.strip()
+            if not sprint_report_md.startswith("# 📊 Reddit Intent Intelligence Sprint Report"):
+                raise ValueError("Gemini response did not match the required sprint report markdown format")
+            high_intent_section = sprint_report_md.split("### 3. 📈 Hot Discussion Angle", 1)[0]
+            leads = [
+                line for line in high_intent_section.splitlines()
+                if line.startswith("> **Subreddit:**")
+            ]
+            print(f"[OK] Gemini returned sprint report with {len(leads)} intent opportunities")
+            gemini_ok = True
+            break
+        except Exception as e:
+            err_str = str(e)
+            print(f"  [ERROR] Attempt {attempt + 1} failed: {type(e).__name__}: {err_str[:200]}")
+            if attempt < GEMINI_RETRIES - 1:
+                wait = GEMINI_BACKOFF[attempt]
+                print(f"  [INFO] Waiting {wait}s before retry...")
+                time.sleep(wait)
 
 if not gemini_ok and not scraping_failed:
     print("[WARN] All Gemini attempts failed. Sending empty report.")
