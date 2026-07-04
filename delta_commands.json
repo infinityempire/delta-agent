@@ -1,0 +1,25 @@
+{
+    "discord": {
+        "message_template": "📊 **Delta Agent Report**\n\n{summary}",
+        "embed_color": 5814783,
+        "allowed_mentions": {"parse": []}
+    },
+    "telegram": {
+        "message_template": "📊 *Delta Agent Report*\n\n{summary}",
+        "parse_mode": "Markdown"
+    },
+    "tumblr": {
+        "post_template": "<h2>📊 Delta Agent Report</h2><p>{summary}</p>",
+        "blog_name": "",
+        "state": "published",
+        "tags": ["delta-agent", "automation", "report"]
+    },
+    "bluesky": {
+        "post_template": "📊 Delta Agent Report\n\n{summary}",
+        "langs": ["en"]
+    },
+    "mastodon": {
+        "message_template": "📊 Delta Agent Report\n\n{summary}",
+        "visibility": "unlisted"
+    }
+}
