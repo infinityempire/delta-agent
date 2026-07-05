@@ -326,7 +326,12 @@ class BlueskyPoster:
             }
             
             response = self.http.post(url, json=payload)
-            data = response.json()
+            
+            try:
+                data = response.json()
+            except ValueError as e:
+                logger.error(f"Bluesky auth: Failed to parse response: {e}")
+                return None
             
             if "accessJwt" in data:
                 self._session_token = data["accessJwt"]
@@ -355,8 +360,7 @@ class BlueskyPoster:
                         error="Authentication failed"
                     )
             
-            # Create post
-            url = f"{self.API_URL}/xrpc/com.atproto.server.createSession"
+            # Create post - use correct headers for createRecord
             headers = {
                 "Authorization": f"Bearer {self._session_token}",
                 "Content-Type": "application/json"
@@ -378,7 +382,15 @@ class BlueskyPoster:
             }
             
             response = self.http.post(create_url, json=repo_payload, headers=headers)
-            data = response.json()
+            
+            try:
+                data = response.json()
+            except ValueError as e:
+                return PostResult(
+                    network="bluesky",
+                    success=False,
+                    error=f"Failed to parse response: {e}"
+                )
             
             if "uri" in data:
                 return PostResult(
@@ -441,7 +453,15 @@ class MastodonPoster:
             }
             
             response = self.http.post(url, json=payload, headers=headers)
-            data = response.json()
+            
+            try:
+                data = response.json()
+            except ValueError as e:
+                return PostResult(
+                    network="mastodon",
+                    success=False,
+                    error=f"Failed to parse response: {e}"
+                )
             
             if "id" in data:
                 return PostResult(
