@@ -1,11 +1,12 @@
 """
 Social Media Poster - Multi-Platform Automated Distribution
-Supports: Reddit, Bluesky, Mastodon, Telegram
+Supports: Reddit, Bluesky, Mastodon, Lemmy, Tumblr, Telegram, Dev.to, Hashnode
 """
 
 import os
 import json
 import time
+import base64
 import requests
 from datetime import datetime
 from dotenv import load_dotenv
@@ -26,6 +27,22 @@ BLUESKY_PASSWORD = os.environ.get("BLUESKY_PASSWORD", "")
 
 MASTODON_INSTANCE = os.environ.get("MASTODON_INSTANCE", "mastodon.social")
 MASTODON_TOKEN = os.environ.get("MASTODON_TOKEN", "")
+
+# Lemmy Configuration
+LEMMY_INSTANCES = os.environ.get("LEMMY_INSTANCES", "lemmy.ml,beehaw.org").split(",")
+LEMMY_TOKEN = os.environ.get("LEMMY_TOKEN", "")
+
+# Tumblr Configuration
+TUMBLR_API_KEY = os.environ.get("TUMBLR_API_KEY", "")
+TUMBLR_API_SECRET = os.environ.get("TUMBLR_API_SECRET", "")
+TUMBLR_BLOG_NAME = os.environ.get("TUMBLR_BLOG_NAME", "")
+
+# Dev.to Configuration
+DEV_TO_API_KEY = os.environ.get("DEV_TO_API_KEY", "")
+
+# Hashnode Configuration
+HASHNODE_TOKEN = os.environ.get("HASHNODE_TOKEN", "")
+HASHNODE_PUBLICATION_ID = os.environ.get("HASHNODE_PUBLICATION_ID", "")
 
 # ── Output ────────────────────────────────────────────────────────────────────
 OUTPUT_DIR = "output"
@@ -204,14 +221,15 @@ def post_to_bluesky(text, image_path=None):
     return False
 
 # ── Mastodon Posting ──────────────────────────────────────────────────────────
-def post_to_mastodon(text, visibility="public"):
+def post_to_mastodon(text, visibility="public", instance=None):
     """Post to Mastodon instance"""
     if not MASTODON_TOKEN:
         log_result("Mastodon", False, "No Mastodon token")
         return False
     
+    instance = instance or MASTODON_INSTANCE
     try:
-        url = f"https://{MASTODON_INSTANCE}/api/v1/statuses"
+        url = f"https://{instance}/api/v1/statuses"
         headers = {
             "Authorization": f"Bearer {MASTODON_TOKEN}",
             "Content-Type": "application/json"
@@ -225,12 +243,159 @@ def post_to_mastodon(text, visibility="public"):
         
         if response.status_code in [200, 201]:
             result = response.json()
-            log_result("Mastodon", True, f"Posted: {result.get('url', '')}")
+            log_result(f"Mastodon ({instance})", True, f"Posted: {result.get('url', '')}")
             return True
         else:
-            log_result("Mastodon", False, f"HTTP {response.status_code}: {response.text[:100]}")
+            log_result(f"Mastodon ({instance})", False, f"HTTP {response.status_code}: {response.text[:100]}")
     except Exception as e:
-        log_result("Mastodon", False, str(e))
+        log_result(f"Mastodon ({instance})", False, str(e))
+    
+    return False
+
+# ── Lemmy Posting ─────────────────────────────────────────────────────────────
+def post_to_lemmy(community, text, instance=None):
+    """Post to Lemmy instance"""
+    if not LEMMY_TOKEN:
+        log_result("Lemmy", False, "No Lemmy token")
+        return False
+    
+    instance = instance or "lemmy.ml"
+    try:
+        # Lemmy post format: community@instance
+        if "@" not in community:
+            community = f"{community}@{instance}"
+        
+        url = f"https://{instance}/api/v3/post"
+        headers = {
+            "Authorization": f"Bearer {LEMMY_TOKEN}",
+            "Content-Type": "application/json"
+        }
+        data = {
+            "name": text[:300],  # Lemmy title limit
+            "body": text,
+            "community_id": 0,  # Would need to resolve community first
+        }
+        
+        response = requests.post(url, headers=headers, json=data, timeout=30)
+        
+        if response.status_code == 200:
+            result = response.json()
+            log_result(f"Lemmy ({instance})", True, f"Posted to {community}")
+            return True
+        else:
+            log_result(f"Lemmy ({instance})", False, f"HTTP {response.status_code}")
+    except Exception as e:
+        log_result(f"Lemmy ({instance})", False, str(e))
+    
+    return False
+
+# ── Tumblr Posting ───────────────────────────────────────────────────────────
+def post_to_tumblr(text, tags=None):
+    """Post to Tumblr blog"""
+    if not all([TUMBLR_API_KEY, TUMBLR_BLOG_NAME]):
+        log_result("Tumblr", False, "Missing Tumblr credentials")
+        return False
+    
+    try:
+        url = f"https://api.tumblr.com/v2/blog/{TUMBLR_BLOG_NAME}/post"
+        headers = {"Content-Type": "application/json"}
+        data = {
+            "content": text,
+            "tags": tags or ["ai", "productivity", "telegram", "bot"],
+            "format": "html"
+        }
+        
+        # Tumblr uses OAuth 1.0 - simplified for demo
+        # Full implementation would need oauth1 library
+        log_result("Tumblr", False, "OAuth 1.0 required - needs full implementation")
+    except Exception as e:
+        log_result("Tumblr", False, str(e))
+    
+    return False
+
+# ── Dev.to Posting ────────────────────────────────────────────────────────────
+def post_to_devto(title, content, tags=None, canonical_url=None):
+    """Post article to Dev.to"""
+    if not DEV_TO_API_KEY:
+        log_result("Dev.to", False, "No Dev.to API key")
+        return False
+    
+    try:
+        url = "https://dev.to/api/articles"
+        headers = {
+            "Authorization": DEV_TO_API_KEY,
+            "Content-Type": "application/json"
+        }
+        data = {
+            "title": title,
+            "body_markdown": content,
+            "tags": tags or ["ai", "productivity", "telegram"],
+            "published": True
+        }
+        if canonical_url:
+            data["canonical_url"] = canonical_url
+        
+        response = requests.post(url, headers=headers, json=data, timeout=30)
+        
+        if response.status_code in [200, 201]:
+            result = response.json()
+            log_result("Dev.to", True, f"Published: {result.get('url', '')}")
+            return True
+        else:
+            log_result("Dev.to", False, f"HTTP {response.status_code}: {response.text[:100]}")
+    except Exception as e:
+        log_result("Dev.to", False, str(e))
+    
+    return False
+
+# ── Hashnode Posting ───────────────────────────────────────────────────────────
+def post_to_hashnode(title, content, tags=None, cover_image_url=None):
+    """Post article to Hashnode"""
+    if not HASHNODE_TOKEN:
+        log_result("Hashnode", False, "No Hashnode token")
+        return False
+    
+    try:
+        url = "https://gql.hashnode.com"
+        headers = {
+            "Authorization": HASHNODE_TOKEN,
+            "Content-Type": "application/json"
+        }
+        query = """
+        mutation CreatePublicationStory($input: CreateStoryInput!) {
+            publicationStory(input: $input) {
+                success
+                post {
+                    slug
+                    url
+                }
+            }
+        }
+        """
+        data = {
+            "query": query,
+            "variables": {
+                "input": {
+                    "title": title,
+                    "content": content,
+                    "tags": tags or [{"name": "AI"}, {"name": "Productivity"}],
+                    "publicationId": HASHNODE_PUBLICATION_ID
+                }
+            }
+        }
+        
+        response = requests.post(url, headers=headers, json=data, timeout=30)
+        
+        if response.status_code == 200:
+            result = response.json()
+            if result.get("data", {}).get("publicationStory", {}).get("success"):
+                url = result["data"]["publicationStory"]["post"]["url"]
+                log_result("Hashnode", True, f"Published: {url}")
+                return True
+        
+        log_result("Hashnode", False, f"Failed: {response.text[:100]}")
+    except Exception as e:
+        log_result("Hashnode", False, str(e))
     
     return False
 
@@ -258,12 +423,39 @@ I built a bot that does this:
 
 Try it now: @replyq1_bot 🚀
 
-#AI #Productivity #Telegram"""
+#AI #Productivity #Telegram #VoiceToText"""
 
-    # Reddit versions
-    reddit_title_he = "🎙️ I built an AI bot that transcribes voice messages in 2 seconds (Made in Israel 🇮🇱)"
-    reddit_title_en = "I built a Telegram bot that auto-transcribes voice messages - it's going viral in Israel"
-    
+    # Full article for blog platforms
+    full_article = """# I Built an AI Bot That Transcribes Voice Messages in 2 Seconds 🇮🇱
+
+**The Problem:** In Israeli culture (and many others), sending long voice messages (5-10 minutes!) is extremely common. It's more personal than text, but incredibly time-consuming to listen to.
+
+**The Solution:** I built zeta ai, a Telegram bot that uses Google's AI to transcribe any voice message instantly.
+
+## Features
+
+- ⚡ Sub-2-second transcription
+- 🧠 AI-powered accuracy  
+- 👥 Works in groups - auto-transcribes all voice messages
+- 🌍 Multi-language support
+- 🇮🇱 Made with love in Israel
+
+## How It Works
+
+1. Open the bot: @replyq1_bot
+2. Forward any voice message
+3. Get accurate text instantly!
+
+## The Viral Loop
+
+The best part? Add it to Telegram groups, and it auto-transcribes every voice message. Everyone in the group sees the magic and wants it for themselves!
+
+## Try It Free
+
+The service is free for the first 5 transcriptions. Start saving time now: @replyq1_bot 🚀
+
+#AI #VoiceToText #Productivity #Telegram #Israel #Startup"""
+
     results = {}
     
     if not platforms or "telegram" in platforms:
@@ -273,10 +465,9 @@ Try it now: @replyq1_bot 🚀
     
     if not platforms or "reddit" in platforms:
         print("\n[📺] Posting to Reddit...")
-        # Post to multiple subreddits
-        subreddits = ["startups", "entrepreneur", "SideProject", "technology"]
+        subreddits = ["startups", "entrepreneur", "SideProject", "technology", "android", "iOS"]
         for sub in subreddits:
-            post_to_reddit(sub, reddit_title_en, english_post)
+            post_to_reddit(sub, english_post[:300], english_post)
             time.sleep(10)  # Rate limiting
     
     if not platforms or "bluesky" in platforms:
@@ -286,7 +477,36 @@ Try it now: @replyq1_bot 🚀
     
     if not platforms or "mastodon" in platforms:
         print("\n[🐘] Posting to Mastodon...")
-        results["mastodon"] = post_to_mastodon(english_post)
+        # Post to multiple instances
+        instances = ["mastodon.social", "fosstodon.org", "hachyderm.io"]
+        for instance in instances:
+            results[f"mastodon_{instance}"] = post_to_mastodon(english_post, instance=instance)
+            time.sleep(2)
+    
+    if not platforms or "lemmy" in platforms:
+        print("\n[🦎] Posting to Lemmy...")
+        communities = ["technology", "programming", "artificial"]
+        for instance in LEMMY_INSTANCES:
+            for community in communities:
+                post_to_lemmy(community, english_post[:300], instance=instance)
+                time.sleep(3)
+    
+    if not platforms or "devto" in platforms:
+        print("\n[� DEV] Posting to Dev.to...")
+        results["devto"] = post_to_devto(
+            "I Built an AI Bot That Transcribes Voice Messages in 2 Seconds 🇮🇱",
+            full_article,
+            tags=["ai", "productivity", "telegram", "python", "voice"]
+        )
+        time.sleep(2)
+    
+    if not platforms or "hashnode" in platforms:
+        print("\n[📝] Posting to Hashnode...")
+        results["hashnode"] = post_to_hashnode(
+            "I Built an AI Bot That Transcribes Voice Messages in 2 Seconds 🇮🇱",
+            full_article,
+            tags=[{"name": "AI"}, {"name": "Productivity"}, {"name": "Telegram"}]
+        )
         time.sleep(2)
     
     return results
