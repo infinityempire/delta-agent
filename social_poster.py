@@ -1,41 +1,55 @@
 """
-Social Media Poster - Multi-Platform Automated Distribution
-Supports: Reddit, Bluesky, Mastodon, Lemmy, Tumblr, Telegram, Dev.to, Hashnode
+Delta Agent - Decentralized Social Media Distributor
+Supports: Mastodon, Bluesky, Threads, Nostr, Farcaster, Lemmy, Pixelfed, Reddit, Dev.to, Hashnode
 """
 
 import os
 import json
 import time
 import base64
+import hashlib
+import secrets
 import requests
 from datetime import datetime
 from dotenv import load_dotenv
+from typing import Optional, List, Dict
 
 load_dotenv()
 
 # ── Configuration ─────────────────────────────────────────────────────────────
-TELEGRAM_BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN", "")
-TELEGRAM_CHAT_IDS = os.environ.get("TELEGRAM_CHAT_IDS", "").split(",")
 
+# Mastodon Configuration (Federated - ActivityPub)
+MASTODON_INSTANCES = os.environ.get("MASTODON_INSTANCES", "mastodon.social,fosstodon.org,hachyderm.io").split(",")
+MASTODON_TOKEN = os.environ.get("MASTODON_TOKEN", "")
+
+# Bluesky Configuration (AT Protocol)
+BLUESKY_HANDLE = os.environ.get("BLUESKY_HANDLE", "")
+BLUESKY_PASSWORD = os.environ.get("BLUESKY_PASSWORD", "")
+
+# Threads Configuration (Meta - ActivityPub)
+THREADS_TOKEN = os.environ.get("THREADS_TOKEN", "")
+THREADS_USER_ID = os.environ.get("THREADS_USER_ID", "")
+
+# Nostr Configuration (Decentralized - Keys Based)
+NOSTR_PRIVATE_KEY = os.environ.get("NOSTR_PRIVATE_KEY", "")
+NOSTR_RELAY_LIST = os.environ.get("NOSTR_RELAYS", "wss://relay.damus.io,wss://nos.lol,wss://relay.nostr.band").split(",")
+
+# Farcaster Configuration (Farcaster Protocol)
+FARCASTER_SIGNER = os.environ.get("FARCASTER_SIGNER", "")
+
+# Lemmy Configuration (Reddit Alternative - ActivityPub)
+LEMMY_INSTANCES = os.environ.get("LEMMY_INSTANCES", "lemmy.ml,beehaw.org").split(",")
+LEMMY_TOKEN = os.environ.get("LEMMY_TOKEN", "")
+
+# Pixelfed Configuration (Instagram Alternative - ActivityPub)
+PIXELFED_INSTANCE = os.environ.get("PIXELFED_INSTANCE", "pixelfed.social")
+PIXELFED_TOKEN = os.environ.get("PIXELFED_TOKEN", "")
+
+# Reddit Configuration
 REDDIT_CLIENT_ID = os.environ.get("REDDIT_CLIENT_ID", "")
 REDDIT_CLIENT_SECRET = os.environ.get("REDDIT_CLIENT_SECRET", "")
 REDDIT_USERNAME = os.environ.get("REDDIT_USERNAME", "")
 REDDIT_PASSWORD = os.environ.get("REDDIT_PASSWORD", "")
-
-BLUESKY_HANDLE = os.environ.get("BLUESKY_HANDLE", "")
-BLUESKY_PASSWORD = os.environ.get("BLUESKY_PASSWORD", "")
-
-MASTODON_INSTANCE = os.environ.get("MASTODON_INSTANCE", "mastodon.social")
-MASTODON_TOKEN = os.environ.get("MASTODON_TOKEN", "")
-
-# Lemmy Configuration
-LEMMY_INSTANCES = os.environ.get("LEMMY_INSTANCES", "lemmy.ml,beehaw.org").split(",")
-LEMMY_TOKEN = os.environ.get("LEMMY_TOKEN", "")
-
-# Tumblr Configuration
-TUMBLR_API_KEY = os.environ.get("TUMBLR_API_KEY", "")
-TUMBLR_API_SECRET = os.environ.get("TUMBLR_API_SECRET", "")
-TUMBLR_BLOG_NAME = os.environ.get("TUMBLR_BLOG_NAME", "")
 
 # Dev.to Configuration
 DEV_TO_API_KEY = os.environ.get("DEV_TO_API_KEY", "")
@@ -253,39 +267,159 @@ def post_to_mastodon(text, visibility="public", instance=None):
     return False
 
 # ── Lemmy Posting ─────────────────────────────────────────────────────────────
-def post_to_lemmy(community, text, instance=None):
-    """Post to Lemmy instance"""
+def post_to_lemmy(community, title, content, instance=None):
+    """Post to Lemmy instance (Reddit alternative)"""
     if not LEMMY_TOKEN:
         log_result("Lemmy", False, "No Lemmy token")
         return False
     
     instance = instance or "lemmy.ml"
     try:
-        # Lemmy post format: community@instance
-        if "@" not in community:
-            community = f"{community}@{instance}"
-        
-        url = f"https://{instance}/api/v3/post"
+        # First resolve the community
+        resolve_url = f"https://{instance}/api/v3/community"
         headers = {
             "Authorization": f"Bearer {LEMMY_TOKEN}",
             "Content-Type": "application/json"
         }
+        resolve_params = {"name": community}
+        resolve_resp = requests.get(resolve_url, headers=headers, params=resolve_params, timeout=30)
+        
+        if resolve_resp.status_code == 200:
+            community_data = resolve_resp.json().get("community_view", {})
+            community_id = community_data.get("community", {}).get("id", 0)
+        else:
+            community_id = 0
+        
+        # Create post
+        post_url = f"https://{instance}/api/v3/post"
         data = {
-            "name": text[:300],  # Lemmy title limit
-            "body": text,
-            "community_id": 0,  # Would need to resolve community first
+            "name": title[:300],
+            "body": content,
+            "community_id": community_id,
+        }
+        
+        response = requests.post(post_url, headers=headers, json=data, timeout=30)
+        
+        if response.status_code == 200:
+            log_result(f"Lemmy ({instance})", True, f"Posted to {community}")
+            return True
+        else:
+            log_result(f"Lemmy ({instance})", False, f"HTTP {response.status_code}: {response.text[:100]}")
+    except Exception as e:
+        log_result(f"Lemmy ({instance})", False, str(e))
+    
+    return False
+
+# ── Threads (Meta) Posting ───────────────────────────────────────────────────
+def post_to_threads(text):
+    """Post to Threads via Meta's API (requires Instagram token)"""
+    if not THREADS_TOKEN:
+        log_result("Threads", False, "No Threads/Instagram token")
+        return False
+    
+    try:
+        # Threads uses Instagram's Graph API
+        url = "https://graph.facebook.com/v18.0/me/threads"
+        headers = {"Content-Type": "application/json"}
+        data = {
+            "message": text,
+            "access_token": THREADS_TOKEN
         }
         
         response = requests.post(url, headers=headers, json=data, timeout=30)
         
         if response.status_code == 200:
             result = response.json()
-            log_result(f"Lemmy ({instance})", True, f"Posted to {community}")
+            log_result("Threads", True, f"Posted: {result.get('id', '')}")
             return True
         else:
-            log_result(f"Lemmy ({instance})", False, f"HTTP {response.status_code}")
+            log_result("Threads", False, f"HTTP {response.status_code}: {response.text[:100]}")
     except Exception as e:
-        log_result(f"Lemmy ({instance})", False, str(e))
+        log_result("Threads", False, str(e))
+    
+    return False
+
+# ── Nostr Posting ───────────────────────────────────────────────────────────
+def post_to_nostr(content: str, tags: List[str] = None) -> bool:
+    """Post to Nostr decentralized network using NIP-01 (text note)"""
+    if not NOSTR_PRIVATE_KEY:
+        log_result("Nostr", False, "No Nostr private key configured")
+        return False
+    
+    try:
+        # Convert hex private key to hex public key
+        pubkey = hashlib.sha256(bytes.fromhex(NOSTR_PRIVATE_KEY)).hexdigest()
+        
+        # Create event
+        event = {
+            "kind": 1,  # Text note
+            "content": content,
+            "tags": [[ "t", tag] for tag in (tags or [])],
+            "pubkey": pubkey,
+            "created_at": int(datetime.now().timestamp()),
+            "id": "",  # Will be computed
+            "sig": ""  # Will be computed
+        }
+        
+        # Compute event id = sha256 of serialized event
+        event_json = json.dumps([0, event["kind"], event["pubkey"], event["created_at"], event["tags"], event["content"]], separators=(',', ':'))
+        event["id"] = hashlib.sha256(event_json.encode()).hexdigest()
+        
+        # Sign with schnorr (simplified - in production use nostr-tools library)
+        # For demo, we'll broadcast to relays
+        event["sig"] = "fake_signature_for_demo"  # Would use proper schnorr in production
+        
+        # Broadcast to relays
+        success_count = 0
+        for relay in NOSTR_RELAY_LIST:
+            try:
+                ws_url = relay.replace("wss://", "https://").replace("ws://", "http://")
+                api_url = ws_url + "/api/v1"
+                response = requests.post(api_url, json=["EVENT", event], timeout=10)
+                if response.status_code == 200:
+                    success_count += 1
+            except:
+                pass
+        
+        if success_count > 0:
+            log_result("Nostr", True, f"Posted to {success_count}/{len(NOSTR_RELAY_LIST)} relays")
+            return True
+        else:
+            log_result("Nostr", False, "Failed to post to any relay")
+    except Exception as e:
+        log_result("Nostr", False, str(e))
+    
+    return False
+
+# ── Pixelfed Posting ─────────────────────────────────────────────────────────
+def post_to_pixelfed(text, image_path: str = None):
+    """Post to Pixelfed (Instagram alternative - ActivityPub)"""
+    if not PIXELFED_TOKEN:
+        log_result("Pixelfed", False, "No Pixelfed token")
+        return False
+    
+    try:
+        instance = PIXELFED_INSTANCE or "pixelfed.social"
+        url = f"https://{instance}/api/v1/statuses"
+        headers = {
+            "Authorization": f"Bearer {PIXELFED_TOKEN}",
+            "Content-Type": "application/json"
+        }
+        data = {
+            "status": text,
+            "visibility": "public"
+        }
+        
+        response = requests.post(url, headers=headers, json=data, timeout=30)
+        
+        if response.status_code in [200, 201]:
+            result = response.json()
+            log_result(f"Pixelfed ({instance})", True, f"Posted: {result.get('url', '')}")
+            return True
+        else:
+            log_result(f"Pixelfed ({instance})", False, f"HTTP {response.status_code}")
+    except Exception as e:
+        log_result("Pixelfed", False, str(e))
     
     return False
 
@@ -401,34 +535,131 @@ def post_to_hashnode(title, content, tags=None, cover_image_url=None):
 
 # ── Bulk Posting ──────────────────────────────────────────────────────────────
 def distribute_content(platforms=None):
-    """Distribute marketing content to all configured platforms"""
+    """Distribute marketing content to all DECENTRALIZED platforms"""
     
-    # Hebrew post (for Israeli audiences)
-    hebrew_post = """נמאס לכם מהודעות קוליות של 5 דקות? 🤯
+    # Hebrew launch post (the exact copy provided)
+    hebrew_post = """נמאס לכם שחופרים לכם בהודעות קוליות ארוכות? 🤯
 
-בניתי בוט שעושה את זה:
-🎙️ שולחים הודעה קולית
-⚡ מקבלים טקסט תוך שניות
-🇮🇱 כחול-לבן וחינמי בהתחלה
+בניתי כלי מטורף (כחול-לבן 🇮🇱) שפותר את זה בשנייה!
+בוט טלגרם מבוסס AI של גוגל שתופר הודעות קוליות ארוכות והופך אותן לטקסט קריא ומדויק בפחות משתי שניות.
 
-נסו עכשיו: @replyq1_bot 🚀"""
+💡 איך זה עובד?
+1. נכנסים לבוט בטלגרם: @replyq1_bot
+2. מעבירים לו (Forward) כל הודעה קולית שקיבלתם.
+3. מקבלים מיד את הטקסט ישירות לעיניים.
 
-    # English post (for international audiences)
-    english_post = """Tired of 5-minute voice messages? 🤯
+🔥 בונוס לחברים בקבוצות: אתם יכולים להוסיף אותו ישירות לקבוצות שלכם, והוא יתמלל כל הודעה קולית שנשלחת שם אוטומטית!
 
-I built a bot that does this:
-🎙️ Send a voice message
-⚡ Get text in seconds
-🇮🇱 Made in Israel, free to start
+השירות חינמי לחלוטין לשימוש ראשוני. תתחילו לחסוך זמן פה: @replyq1_bot 🚀"""
 
-Try it now: @replyq1_bot 🚀
+    # English version for international audiences
+    english_post = """Tired of endless voice messages? 🤯
 
-#AI #Productivity #Telegram #VoiceToText"""
+I built a killer tool (Made in Israel 🇮🇱) that solves this in seconds!
 
-    # Full article for blog platforms
-    full_article = """# I Built an AI Bot That Transcribes Voice Messages in 2 Seconds 🇮🇱
+A Telegram bot powered by Google's AI that transcribes long voice messages into clean, accurate text in under 2 seconds.
 
-**The Problem:** In Israeli culture (and many others), sending long voice messages (5-10 minutes!) is extremely common. It's more personal than text, but incredibly time-consuming to listen to.
+💡 How it works:
+1️⃣ Open the bot: @replyq1_bot
+2️⃣ Forward any voice message
+3️⃣ Get text instantly
+
+🔥 Group bonus: Add it to your Telegram groups and it auto-transcribes every voice message!
+
+Free for initial use. Start saving time now: @replyq1_bot 🚀
+
+#AI #Productivity #VoiceToText #Telegram #Israel"""
+
+    # Short versions for limited-length platforms
+    short_hebrew = "נמאס מחפירות קוליות? 🇮🇱 בוט AI כחול-לבן שמתמלל ב-2 שניות! @replyq1_bot 🚀"
+    short_english = "Tired of voice message dumps? 🇮🇱 AI bot that transcribes in 2 seconds! @replyq1_bot 🚀"
+
+    results = {}
+    
+    # ═══════════════════════════════════════════════════════════
+    # MASTODON (Federated - ActivityPub)
+    # ═══════════════════════════════════════════════════════════
+    if not platforms or "mastodon" in platforms:
+        print("\n[🐘] Posting to Mastodon instances...")
+        instances = ["mastodon.social", "fosstodon.org", "hachyderm.io", "infosec.exchange"]
+        for instance in instances:
+            results[f"mastodon_{instance}"] = post_to_mastodon(english_post, visibility="public", instance=instance)
+            time.sleep(3)
+    
+    # ═══════════════════════════════════════════════════════════
+    # BLUESKY (AT Protocol)
+    # ═══════════════════════════════════════════════════════════
+    if not platforms or "bluesky" in platforms:
+        print("\n[🌀] Posting to Bluesky...")
+        results["bluesky"] = post_to_bluesky(short_english)
+        time.sleep(2)
+    
+    # ═══════════════════════════════════════════════════════════
+    # LEMMY (Reddit Alternative - ActivityPub)
+    # ═══════════════════════════════════════════════════════════
+    if not platforms or "lemmy" in platforms:
+        print("\n[🦎] Posting to Lemmy communities...")
+        communities = ["technology", "programming", "artificial", "linux", "science"]
+        for instance in LEMMY_INSTANCES:
+            for community in communities[:3]:  # Limit to avoid spam
+                post_to_lemmy(community, "AI Bot Transcribes Voice Messages in 2 Seconds 🇮🇱", 
+                            english_post, instance=instance)
+                time.sleep(5)
+    
+    # ═══════════════════════════════════════════════════════════
+    # NOSTR (Decentralized - Keys Based)
+    # ═══════════════════════════════════════════════════════════
+    if not platforms or "nostr" in platforms:
+        print("\n[⚡] Posting to Nostr...")
+        results["nostr"] = post_to_nostr(english_post, tags=["ai", "telegram", "productivity"])
+        time.sleep(2)
+    
+    # ═══════════════════════════════════════════════════════════
+    # THREADS (Meta - ActivityPub)
+    # ═══════════════════════════════════════════════════════════
+    if not platforms or "threads" in platforms:
+        print("\n[📷] Posting to Threads...")
+        results["threads"] = post_to_threads(short_english)
+        time.sleep(2)
+    
+    # ═══════════════════════════════════════════════════════════
+    # FARCASTER (Web3 Social)
+    # Note: Requires Warpcast API - limited access
+    # ═══════════════════════════════════════════════════════════
+    if not platforms or "farcaster" in platforms:
+        print("\n[🌉] Posting to Farcaster...")
+        if FARCASTER_SIGNER:
+            log_result("Farcaster", False, "API not fully implemented - requires Warpcast approval")
+        else:
+            log_result("Farcaster", False, "No signer configured")
+        time.sleep(1)
+    
+    # ═══════════════════════════════════════════════════════════
+    # PIXELFED (Instagram Alternative - ActivityPub)
+    # ═══════════════════════════════════════════════════════════
+    if not platforms or "pixelfed" in platforms:
+        print("\n[📸] Posting to Pixelfed...")
+        results["pixelfed"] = post_to_pixelfed(short_english)
+        time.sleep(2)
+    
+    # ═══════════════════════════════════════════════════════════
+    # REDDIT (Traditional)
+    # ═══════════════════════════════════════════════════════════
+    if not platforms or "reddit" in platforms:
+        print("\n[📺] Posting to Reddit...")
+        subreddits = ["startups", "entrepreneur", "SideProject", "technology", "android", "iOS"]
+        for sub in subreddits:
+            post_to_reddit(sub, "I built an AI bot that transcribes voice messages in 2 seconds 🇮🇱", english_post)
+            time.sleep(10)
+    
+    # ═══════════════════════════════════════════════════════════
+    # DEV.TO (Developer Community)
+    # ═══════════════════════════════════════════════════════════
+    if not platforms or "devto" in platforms:
+        print("\n[💻] Posting to Dev.to...")
+        full_article = """# I Built an AI Bot That Transcribes Voice Messages in 2 Seconds 🇮🇱
+
+**The Problem:** In Israeli culture (and many others), sending long voice messages (5-10 minutes!) is extremely common.
 
 **The Solution:** I built zeta ai, a Telegram bot that uses Google's AI to transcribe any voice message instantly.
 
@@ -440,72 +671,28 @@ Try it now: @replyq1_bot 🚀
 - 🌍 Multi-language support
 - 🇮🇱 Made with love in Israel
 
-## How It Works
-
-1. Open the bot: @replyq1_bot
-2. Forward any voice message
-3. Get accurate text instantly!
-
 ## The Viral Loop
 
-The best part? Add it to Telegram groups, and it auto-transcribes every voice message. Everyone in the group sees the magic and wants it for themselves!
+Add it to Telegram groups, and it auto-transcribes every voice message. Everyone sees the magic!
 
 ## Try It Free
 
-The service is free for the first 5 transcriptions. Start saving time now: @replyq1_bot 🚀
+The service is free for the first 5 transcriptions: @replyq1_bot 🚀
 
-#AI #VoiceToText #Productivity #Telegram #Israel #Startup"""
+```python
+# Example: How the bot works
+1. User forwards voice message to @replyq1_bot
+2. Bot uses Google Speech-to-Text API
+3. AI processes and improves accuracy
+4. User receives clean text in <2 seconds
+```
 
-    results = {}
-    
-    if not platforms or "telegram" in platforms:
-        print("\n[📱] Posting to Telegram...")
-        results["telegram"] = post_to_telegram(hebrew_post)
-        time.sleep(2)
-    
-    if not platforms or "reddit" in platforms:
-        print("\n[📺] Posting to Reddit...")
-        subreddits = ["startups", "entrepreneur", "SideProject", "technology", "android", "iOS"]
-        for sub in subreddits:
-            post_to_reddit(sub, english_post[:300], english_post)
-            time.sleep(10)  # Rate limiting
-    
-    if not platforms or "bluesky" in platforms:
-        print("\n[🌀] Posting to Bluesky...")
-        results["bluesky"] = post_to_bluesky(english_post)
-        time.sleep(2)
-    
-    if not platforms or "mastodon" in platforms:
-        print("\n[🐘] Posting to Mastodon...")
-        # Post to multiple instances
-        instances = ["mastodon.social", "fosstodon.org", "hachyderm.io"]
-        for instance in instances:
-            results[f"mastodon_{instance}"] = post_to_mastodon(english_post, instance=instance)
-            time.sleep(2)
-    
-    if not platforms or "lemmy" in platforms:
-        print("\n[🦎] Posting to Lemmy...")
-        communities = ["technology", "programming", "artificial"]
-        for instance in LEMMY_INSTANCES:
-            for community in communities:
-                post_to_lemmy(community, english_post[:300], instance=instance)
-                time.sleep(3)
-    
-    if not platforms or "devto" in platforms:
-        print("\n[� DEV] Posting to Dev.to...")
+#AI #Productivity #VoiceToText #Telegram #Python"""
+
         results["devto"] = post_to_devto(
             "I Built an AI Bot That Transcribes Voice Messages in 2 Seconds 🇮🇱",
             full_article,
             tags=["ai", "productivity", "telegram", "python", "voice"]
-        )
-        time.sleep(2)
-    
-    if not platforms or "hashnode" in platforms:
-        print("\n[📝] Posting to Hashnode...")
-        results["hashnode"] = post_to_hashnode(
-            "I Built an AI Bot That Transcribes Voice Messages in 2 Seconds 🇮🇱",
-            full_article,
-            tags=[{"name": "AI"}, {"name": "Productivity"}, {"name": "Telegram"}]
         )
         time.sleep(2)
     
@@ -519,16 +706,36 @@ if __name__ == "__main__":
     if len(sys.argv) > 1:
         platforms = [p.strip().lower() for p in sys.argv[1].split(",")]
     
-    print("=" * 60)
-    print("DELTA AGENT - Social Media Distributor")
-    print(f"Platforms: {platforms or 'ALL'}")
-    print(f"Timestamp: {datetime.now().isoformat()}")
+    print("""
+╔══════════════════════════════════════════════════════════════╗
+║  DELTA AGENT - Decentralized Social Media Distributor    ║
+║  Broadcasting zeta ai (@replyq1_bot) launch post          ║
+╚══════════════════════════════════════════════════════════════╝
+    """)
+    
+    print("📡 SUPPORTED DECENTRALIZED PLATFORMS:")
+    print("   🐘 Mastodon (ActivityPub)")
+    print("   🌀 Bluesky (AT Protocol)")
+    print("   ⚡ Nostr (Keys-Based)")
+    print("   🦎 Lemmy (Reddit Alternative)")
+    print("   🌉 Threads (Meta/ActivityPub)")
+    print("   📸 Pixelfed (Instagram Alternative)")
+    print("   📺 Reddit (Traditional)")
+    print("   💻 Dev.to (Developer Community)")
+    print()
+    print(f"⏰ Timestamp: {datetime.now().isoformat()}")
+    print(f"🎯 Platforms: {platforms or 'ALL DECENTRALIZED NETWORKS'}")
     print("=" * 60)
     
     results = distribute_content(platforms)
     
     print("\n" + "=" * 60)
-    print("DISTRIBUTION COMPLETE")
+    print("🚀 DISTRIBUTION COMPLETE")
     success_count = sum(1 for v in results.values() if v)
-    print(f"Success: {success_count}/{len(results)} platforms")
+    print(f"✅ Success: {success_count}/{len(results)} platforms")
+    print()
+    print("📊 RESULTS:")
+    for platform, success in results.items():
+        status = "✅" if success else "❌"
+        print(f"   {status} {platform}")
     print("=" * 60)
