@@ -33,7 +33,7 @@ class GeminiWriterAgent:
     """
 
     MAX_CACHE_SIZE = 50
-    MAX_INPUT_CHARS = 500  # Truncate long posts to save tokens
+    MAX_INPUT_CHARS = 4000  # Truncate long posts to save tokens
     
     def __init__(self, mock_mode: bool = False):
         """Initialize the Gemini writer agent."""
