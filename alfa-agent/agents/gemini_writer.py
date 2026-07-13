@@ -1,10 +1,10 @@
 """
 Contextual Writer Agent (Vibe-Checker).
-Uses Google Gemini API to generate tailored, human-sounding Reddit comments.
+Uses Google Gemini API to generate tailored, human-sounding content.
 
 COST OPTIMIZATIONS:
 1. Using gemini-1.5-flash (cheaper than 2.0-flash)
-2. Input truncation to reduce token count (500 chars max)
+2. Input truncation to reduce token count (4000 chars max)
 3. Response caching (LRU) to avoid duplicate API calls
 4. Rate limiting between calls (1.5s delay)
 5. Optimized retry with exponential backoff
@@ -23,11 +23,11 @@ from utils.logger import logger
 
 class GeminiWriterAgent:
     """
-    Agent responsible for generating human-like Reddit comments using Gemini.
+    Agent responsible for generating human-like content using Gemini.
     
     COST OPTIMIZATIONS:
-    - LRU Cache: Stores last 50 generated comments to avoid duplicate API calls
-    - Input Truncation: Limits post text to 500 chars to reduce input tokens
+    - LRU Cache: Stores last 50 generated responses to avoid duplicate API calls
+    - Input Truncation: Limits content to 4000 chars to reduce input tokens
     - Rate Limiting: 1.5s delay between API calls
     - Optimized Model: Uses 1.5-flash for 75% cost reduction
     """
@@ -190,7 +190,7 @@ What Works for Growth:
         if len(content) > self.MAX_INPUT_CHARS:
             content = content[:self.MAX_INPUT_CHARS] + "... [truncated]"
         
-        prompt = f"""Write a Reddit comment responding to this post:
+        prompt = f"""Write a helpful comment responding to this post:
 
 Title: {post['title']}
 
@@ -222,7 +222,7 @@ Do not use these words: delve, revolutionary, landscape, critical, game-changer,
         comments: List[Dict[str, Any]] = None,
     ) -> Optional[str]:
         """
-        Generate a comment for a Reddit post.
+        Generate a comment for a post.
         
         COST OPTIMIZATIONS:
         - Checks response cache before API call

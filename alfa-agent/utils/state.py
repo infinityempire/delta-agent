@@ -74,23 +74,11 @@ class StateManager:
         self._processed_posts.add(post_id)
         self._save_state()
     
-    def get_last_processed_subreddits(self) -> Dict[str, str]:
-        """Get the last processed timestamp for each subreddit."""
-        return self._state.get("subreddit_timestamps", {})
-    
-    def update_subreddit_timestamp(self, subreddit: str) -> None:
-        """Update the last processed timestamp for a subreddit."""
-        if "subreddit_timestamps" not in self._state:
-            self._state["subreddit_timestamps"] = {}
-        self._state["subreddit_timestamps"][subreddit] = datetime.now().isoformat()
-        self._save_state()
-    
     def get_stats(self) -> Dict[str, Any]:
         """Get statistics about agent runs."""
         return {
             "total_processed_posts": len(self._processed_posts),
             "last_run": self._state.get("last_run"),
-            "subreddits": self.get_last_processed_subreddits(),
         }
     
     def reset(self) -> None:

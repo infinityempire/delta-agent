@@ -1,5 +1,5 @@
 """
-Logging utilities for the Reddit Distributor Agent.
+Logging utilities for Alfa-Agent.
 """
 import logging
 import sys

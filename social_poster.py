@@ -1,6 +1,6 @@
 """
 Delta Agent - Decentralized Social Media Distributor
-Supports: Mastodon, Bluesky, Threads, Nostr, Farcaster, Lemmy, Pixelfed, Reddit, Dev.to, Hashnode
+Supports: Mastodon, Bluesky, Threads, Nostr, Lemmy, Pixelfed, Dev.to, Hashnode
 """
 
 import os
@@ -37,19 +37,13 @@ NOSTR_RELAY_LIST = os.environ.get("NOSTR_RELAYS", "wss://relay.damus.io,wss://no
 # Farcaster Configuration (Farcaster Protocol)
 FARCASTER_SIGNER = os.environ.get("FARCASTER_SIGNER", "")
 
-# Lemmy Configuration (Reddit Alternative - ActivityPub)
+# Lemmy Configuration (Community Forum - ActivityPub)
 LEMMY_INSTANCES = os.environ.get("LEMMY_INSTANCES", "lemmy.ml,beehaw.org").split(",")
 LEMMY_TOKEN = os.environ.get("LEMMY_TOKEN", "")
 
 # Pixelfed Configuration (Instagram Alternative - ActivityPub)
 PIXELFED_INSTANCE = os.environ.get("PIXELFED_INSTANCE", "pixelfed.social")
 PIXELFED_TOKEN = os.environ.get("PIXELFED_TOKEN", "")
-
-# Reddit Configuration
-REDDIT_CLIENT_ID = os.environ.get("REDDIT_CLIENT_ID", "")
-REDDIT_CLIENT_SECRET = os.environ.get("REDDIT_CLIENT_SECRET", "")
-REDDIT_USERNAME = os.environ.get("REDDIT_USERNAME", "")
-REDDIT_PASSWORD = os.environ.get("REDDIT_PASSWORD", "")
 
 # Dev.to Configuration
 DEV_TO_API_KEY = os.environ.get("DEV_TO_API_KEY", "")
@@ -115,74 +109,6 @@ def post_to_telegram(message, chat_id=None):
     
     log_result("Telegram", success_count > 0, f"Posted to {success_count}/{len(targets)} chats")
     return success_count > 0
-
-# ── Reddit Posting ─────────────────────────────────────────────────────────────
-def get_reddit_token():
-    """Get Reddit API access token"""
-    if not all([REDDIT_CLIENT_ID, REDDIT_CLIENT_SECRET, REDDIT_USERNAME, REDDIT_PASSWORD]):
-        return None
-    
-    try:
-        auth = requests.auth.HTTPBasicAuth(REDDIT_CLIENT_ID, REDDIT_CLIENT_SECRET)
-        data = {
-            "grant_type": "password",
-            "username": REDDIT_USERNAME,
-            "password": REDDIT_PASSWORD
-        }
-        headers = {"User-Agent": "DeltaAgent/1.0 SocialPoster"}
-        response = requests.post(
-            "https://www.reddit.com/api/v1/access_token",
-            auth=auth, data=data, headers=headers, timeout=30
-        )
-        
-        if response.status_code == 200:
-            return response.json().get("access_token")
-    except Exception as e:
-        print(f"  Reddit auth error: {e}")
-    return None
-
-def post_to_reddit(subreddit, title, content):
-    """Post to a subreddit"""
-    token = get_reddit_token()
-    if not token:
-        log_result("Reddit", False, "No Reddit credentials or auth failed")
-        return False
-    
-    try:
-        headers = {
-            "Authorization": f"Bearer {token}",
-            "User-Agent": "DeltaAgent/1.0 SocialPoster",
-            "Content-Type": "application/json"
-        }
-        
-        # Submit post
-        payload = {
-            "sr": subreddit,
-            "kind": "self",
-            "title": title,
-            "text": content
-        }
-        
-        response = requests.post(
-            "https://oauth.reddit.com/api/submit",
-            headers=headers, json=payload, timeout=30
-        )
-        
-        if response.status_code == 200:
-            result = response.json()
-            if result.get("json", {}).get("errors"):
-                errors = result["json"]["errors"]
-                log_result("Reddit", False, f"Post errors: {errors}")
-            else:
-                permalink = result.get("json", {}).get("data", {}).get("permalink", "")
-                log_result("Reddit", True, f"Posted to r/{subreddit}: {permalink}")
-                return True
-        else:
-            log_result("Reddit", False, f"HTTP {response.status_code}: {response.text[:100]}")
-    except Exception as e:
-        log_result("Reddit", False, str(e))
-    
-    return False
 
 # ── Bluesky Posting ────────────────────────────────────────────────────────────
 def post_to_bluesky(text, image_path=None):
@@ -268,7 +194,7 @@ def post_to_mastodon(text, visibility="public", instance=None):
 
 # ── Lemmy Posting ─────────────────────────────────────────────────────────────
 def post_to_lemmy(community, title, content, instance=None):
-    """Post to Lemmy instance (Reddit alternative)"""
+    """Post to Lemmy instance (Community Forum)"""
     if not LEMMY_TOKEN:
         log_result("Lemmy", False, "No Lemmy token")
         return False
@@ -595,7 +521,7 @@ Free for initial use. Start saving time now: @replyq1_bot 🚀
         time.sleep(2)
     
     # ═══════════════════════════════════════════════════════════
-    # LEMMY (Reddit Alternative - ActivityPub)
+    # LEMMY (Community Forum - ActivityPub)
     # ═══════════════════════════════════════════════════════════
     if not platforms or "lemmy" in platforms:
         print("\n[🦎] Posting to Lemmy communities...")
@@ -641,16 +567,6 @@ Free for initial use. Start saving time now: @replyq1_bot 🚀
         print("\n[📸] Posting to Pixelfed...")
         results["pixelfed"] = post_to_pixelfed(short_english)
         time.sleep(2)
-    
-    # ═══════════════════════════════════════════════════════════
-    # REDDIT (Traditional)
-    # ═══════════════════════════════════════════════════════════
-    if not platforms or "reddit" in platforms:
-        print("\n[📺] Posting to Reddit...")
-        subreddits = ["startups", "entrepreneur", "SideProject", "technology", "android", "iOS"]
-        for sub in subreddits:
-            post_to_reddit(sub, "I built an AI bot that transcribes voice messages in 2 seconds 🇮🇱", english_post)
-            time.sleep(10)
     
     # ═══════════════════════════════════════════════════════════
     # DEV.TO (Developer Community)
@@ -717,10 +633,9 @@ if __name__ == "__main__":
     print("   🐘 Mastodon (ActivityPub)")
     print("   🌀 Bluesky (AT Protocol)")
     print("   ⚡ Nostr (Keys-Based)")
-    print("   🦎 Lemmy (Reddit Alternative)")
+    print("   🦎 Lemmy (Community Forum)")
     print("   🌉 Threads (Meta/ActivityPub)")
     print("   📸 Pixelfed (Instagram Alternative)")
-    print("   📺 Reddit (Traditional)")
     print("   💻 Dev.to (Developer Community)")
     print()
     print(f"⏰ Timestamp: {datetime.now().isoformat()}")
