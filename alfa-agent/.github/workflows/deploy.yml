@@ -1,0 +1,67 @@
+name: Multi-Agent Production Deployment
+
+on:
+  workflow_dispatch:
+    description: Manual trigger for Termux deployment
+  push:
+    branches:
+      - main
+      - master
+
+env:
+  GAMMA_PORT: 8080
+
+jobs:
+  deploy:
+    name: Deploy to Termux
+    runs-on: self-hosted
+
+    steps:
+      - name: Environment Info
+        run: |
+          echo "=== Deployment Started ==="
+          echo "Date: $(date)"
+
+      - name: Task 1 - Alfa Production Mode
+        run: |
+          echo "=== Task 1: alfa-agent Production ==="
+          mkdir -p ~/alfa-agent
+          cp warmup_v2.py ~/alfa-agent/ 2>/dev/null || true
+          cp warmup.py ~/alfa-agent/ 2>/dev/null || true
+          echo "PRODUCTION_MODE=true" > ~/alfa-agent/.production_mode
+          echo "[OK] alfa-agent production mode configured"
+
+      - name: Task 2 - Deploy Scheduler
+        run: |
+          echo "=== Task 2: Automation Scheduler ==="
+          mkdir -p ~/alfa-agent
+          printf '#!/bin/bash\nPIDFILE=~/alfa-agent/scheduler.pid\nLOGFILE=~/alfa-agent/scheduler.log\nWARMUP=~/alfa-agent/warmup_v2.py\nINTERVAL=1800\nif [ -f "$PIDFILE" ] && kill -0 $(cat "$PIDFILE") 2>/dev/null; then exit 0; fi\necho $$ > "$PIDFILE"\nwhile true; do echo "[$(date)] Warmup" >> "$LOGFILE"; python3 "$WARMUP" >> "$LOGFILE" 2>&1; sleep $INTERVAL; done\n' > ~/alfa-agent/run_scheduler.sh
+          chmod +x ~/alfa-agent/run_scheduler.sh
+          nohup ~/alfa-agent/run_scheduler.sh > /dev/null 2>&1 &
+          echo "[OK] Scheduler deployed"
+
+      - name: Task 3 - Epsilon Termux Config
+        run: |
+          echo "=== Task 3: epsilon-agent Termux ==="
+          mkdir -p ~/epsilon-agent
+          printf 'HEADLESS=true\nCHROMIUM_PATH=/data/data/com.termux/files/usr/bin/chromium\nTERMUX_MODE=true\n' > ~/epsilon-agent/.env.termux
+          echo "[OK] epsilon-agent Termux config created"
+
+      - name: Task 4 - Gamma Orchestrator
+        run: |
+          echo "=== Task 4: Gamma Orchestrator ==="
+          mkdir -p ~/gamma-agent
+          echo "localhost:8080" > ~/gamma-agent/endpoint_config.txt
+          echo "[OK] Gamma endpoint configured"
+
+      - name: Summary
+        run: |
+          echo ""
+          echo "======================================"
+          echo "  DEPLOYMENT COMPLETE"
+          echo "======================================"
+          echo "Task 1: alfa Production - DONE"
+          echo "Task 2: Scheduler - DEPLOYED"
+          echo "Task 3: epsilon Termux - DONE"
+          echo "Task 4: Gamma Orchestrator - DONE"
+          echo "======================================"

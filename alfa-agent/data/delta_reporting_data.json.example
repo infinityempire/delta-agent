@@ -1,0 +1,12 @@
+{
+  "company_metrics": {
+    "mrr": "$0",
+    "arr": "$0",
+    "customers": 0,
+    "churn_rate": "0%",
+    "nps_score": 0
+  },
+  "recent_milestones": [],
+  "lessons_learned": [],
+  "growth_strategies": []
+}

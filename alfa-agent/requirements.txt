@@ -1,0 +1,26 @@
+# Reddit API Client (optional fallback)
+praw>=7.7.0
+
+# Google Gemini API
+google-genai>=0.8.0
+
+# Environment Variables
+python-dotenv>=1.0.0
+
+# HTTP Requests
+requests>=2.31.0
+
+# Async support
+aiohttp>=3.9.0
+
+# Data handling
+pandas>=2.1.0
+
+# Logging
+colorlog>=6.8.0
+
+# Time handling
+python-dateutil>=2.8.0
+
+# Browser Automation
+playwright>=1.40.0

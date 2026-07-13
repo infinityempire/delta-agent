@@ -1,0 +1,565 @@
+"""
+Browser-based Publishing Engine using Playwright.
+Alternative to PRAW for posting comments - requires only username/password.
+"""
+import asyncio
+import random
+import sys
+from typing import List, Dict, Any, Optional
+from datetime import datetime
+
+# Try importing Playwright
+try:
+    from playwright.sync_api import sync_playwright, Browser, Page
+except ImportError:
+    print("ERROR: Playwright not installed. Run: pip install playwright && python -m playwright install chromium")
+    sys.exit(1)
+
+from config.settings import PUBLISHING_CONFIG
+from utils.logger import logger
+from utils.state import state_manager
+
+
+class BrowserPublisher:
+    """
+    Browser-based Reddit publisher using Playwright.
+    
+    Requires only:
+    - REDDIT_USERNAME
+    - REDDIT_PASSWORD
+    - (Optional) GEMINI_API_KEY for AI-generated comments
+    """
+    
+    BASE_URL = "https://www.reddit.com"
+    LOGIN_URL = f"{BASE_URL}/login"
+    
+    # Warmup-mode casual comments pool
+    WARMUP_COMMENTS = [
+        "Great point! I've been thinking about this too.",
+        "This is interesting, thanks for sharing!",
+        "I can relate to this. Well said!",
+        "Thanks for the insight!",
+        "That's a fair take. Appreciate the perspective.",
+        "Interesting! Never thought about it that way.",
+        "Good observation. Thanks for bringing this up!",
+        "I agree with this. Well explained!",
+        "Nice one! Thanks for posting this.",
+        "Very true! I've had similar experiences.",
+    ]
+    def __init__(
+        self,
+        username: str,
+        password: str,
+        mock_mode: bool = False,
+        headless: bool = True,
+        comments_per_round: int = 3,
+        proxy_server: str = None,
+        proxy_username: str = None,
+        proxy_password: str = None
+    ):
+        """
+        Initialize Browser Publisher.
+
+        Args:
+            username: Reddit username
+            password: Reddit password
+            mock_mode: If True, simulate actions without actually posting
+            headless: Run browser in headless mode
+            comments_per_round: Number of comments per warmup round
+            proxy_server: Proxy server URL (e.g., "http://proxy.example.com:8080")
+            proxy_username: Proxy username (for authenticated proxies)
+            proxy_password: Proxy password (for authenticated proxies)
+        """
+        import os as _os
+        
+        self.username = username
+        self.password = password
+        self.mock_mode = mock_mode
+        self.headless = headless
+        self.comments_per_round = comments_per_round
+
+        # Proxy settings from args or environment variables
+        self.proxy_server = proxy_server or _os.environ.get("REDDIT_PROXY_SERVER")
+        self.proxy_username = proxy_username or _os.environ.get("REDDIT_PROXY_USERNAME")
+        self.proxy_password = proxy_password or _os.environ.get("REDDIT_PROXY_PASSWORD")
+
+        self.comments_per_round = comments_per_round
+        
+        self.browser: Optional[Browser] = None
+        self.page: Optional[Page] = None
+        self._playwright = None
+        self._logged_in = False
+        
+    def log(self, message: str, level: str = "info"):
+        """Log a message with timestamp."""
+        prefix = "[DRY-RUN]" if self.mock_mode else "[LIVE]"
+        timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        logger.info(f"{prefix} [{timestamp}] {message}")
+    
+    def _initialize_browser(self) -> bool:
+        """Initialize Playwright browser."""
+        try:
+            self.log("Launching browser...")
+            self._playwright = sync_playwright().start()
+            self.browser = self._playwright.chromium.launch(headless=self.headless)
+            
+            context = self.browser.new_context(
+                user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+                viewport={"width": 1280, "height": 720},
+                locale="en-US",
+            )
+            
+            # Enable request interception for debugging
+            self.page = context.new_page()
+            
+            self.log("Browser launched successfully")
+            return True
+            
+        except Exception as e:
+            self.log(f"Failed to launch browser: {e}", "error")
+            return False
+    
+    def _close_browser(self):
+        """Close the browser."""
+        if self.browser:
+            try:
+                self.browser.close()
+            except:
+                pass
+        if self._playwright:
+            try:
+                self._playwright.stop()
+            except:
+                pass
+        self.browser = None
+        self.page = None
+        self._playwright = None
+    
+    def login(self, max_retries: int = 2) -> bool:
+        """
+        Log in to Reddit using browser automation.
+        
+        Args:
+            max_retries: Maximum number of login attempts
+            
+        Returns:
+            True if login successful, False otherwise
+        """
+        last_error = None
+        
+        for attempt in range(1, max_retries + 1):
+            # Close any existing browser
+            self._close_browser()
+            
+            if not self._initialize_browser():
+                last_error = "Failed to initialize browser"
+                continue
+            
+            if self.mock_mode:
+                self.log(f"DRY-RUN: Would login as {self.username}")
+                self._logged_in = True
+                return True
+            
+            try:
+                self.log(f"Navigating to login page (attempt {attempt}/{max_retries})...")
+                # Use longer timeout for GitHub Actions environments
+                self.page.goto(self.LOGIN_URL, timeout=60000)
+                self.page.wait_for_load_state("domcontentloaded", timeout=30000)
+                
+                # Wait for login form with longer timeout
+                self.log("Waiting for login form...")
+                self.page.wait_for_selector('input[name="username"]', timeout=30000, state="attached")
+                
+                # Fill in credentials
+                self.log(f"Entering username: {self.username}")
+                self.page.fill('input[name="username"]', self.username)
+                
+                self.log("Entering password...")
+                self.page.fill('input[name="password"]', self.password)
+                
+                # Click submit button
+                self.log("Submitting login form...")
+                self.page.click('button[type="submit"]')
+                
+                # Wait for redirect after login with longer timeout
+                self.page.wait_for_load_state("domcontentloaded", timeout=30000)
+                
+                # Give it a moment to redirect
+                import time
+                time.sleep(2)
+                
+                # Check if login was successful (URL should change from /login)
+                current_url = self.page.url
+                if "/login" not in current_url.lower():
+                    self.log("Login successful!")
+                    self._logged_in = True
+                    return True
+                else:
+                    self.log("Login may have failed - still on login page")
+                    # Try to detect error message
+                    error_elem = self.page.query_selector('[data-testid="error-element"]')
+                    if error_elem:
+                        error_text = error_elem.inner_text()
+                        self.log(f"Login error: {error_text}", "error")
+                        last_error = error_text
+                    else:
+                        last_error = "Login page still displayed after submit"
+                        
+            except Exception as e:
+                last_error = str(e)
+                self.log(f"Login error (attempt {attempt}): {e}", "error")
+        
+        self.log(f"Login failed after {max_retries} attempts. Last error: {last_error}", "error")
+        return False
+    
+    def _get_warmup_comment(self, post_title: str = "", subreddit: str = "") -> str:
+        """
+        Get a casual warmup comment.
+        
+        Args:
+            post_title: Post title for context
+            subreddit: Subreddit name for context
+            
+        Returns:
+            A casual comment string
+        """
+        import random
+        
+        base_comment = random.choice(self.WARMUP_COMMENTS)
+        
+        # Add slight variation based on subreddit
+        if subreddit.lower() == "askreddit":
+            return base_comment
+        elif subreddit.lower() == "funny":
+            return f"{base_comment} Funny stuff!"
+        elif subreddit.lower() == "todayilearned":
+            return f"{base_comment} TIL!"
+        elif subreddit.lower() in ["startups", "entrepreneur", "smallbusiness"]:
+            return f"{base_comment} Interesting business perspective."
+        else:
+            return base_comment
+    
+    def _navigate_to_post(self, post_url: str) -> bool:
+        """
+        Navigate to a Reddit post.
+        
+        Args:
+            post_url: Full URL of the Reddit post
+            
+        Returns:
+            True if navigation successful
+        """
+        try:
+            self.log(f"Navigating to post: {post_url[:50]}...")
+            self.page.goto(post_url, timeout=30000)
+            self.page.wait_for_load_state("networkidle")
+            
+            # Wait for comment form to be available
+            self.page.wait_for_timeout(2000)
+            return True
+            
+        except Exception as e:
+            self.log(f"Navigation error: {e}", "error")
+            return False
+    
+    def _find_comment_area(self) -> Optional[Any]:
+        """
+        Find the comment input area on the page.
+        
+        Returns:
+            Comment textarea element or None
+        """
+        try:
+            # Try different selectors for comment area
+            selectors = [
+                'textarea[name="comment"]',
+                'div[data-testid="comment-submit-button"]',
+                'button[data-testid="comment-submit-button"]',
+                'div[placeholder="Add a comment..."]',
+                'textarea[placeholder*="comment"]',
+            ]
+            
+            for selector in selectors:
+                elem = self.page.query_selector(selector)
+                if elem:
+                    return elem
+            
+            return None
+        except:
+            return None
+    
+    def _post_comment(self, comment_text: str) -> Dict[str, Any]:
+        """
+        Post a comment to the current Reddit post.
+        
+        Args:
+            comment_text: The comment text to post
+            
+        Returns:
+            Result dictionary with status and details
+        """
+        result = {
+            "status": "pending",
+            "timestamp": datetime.now().isoformat(),
+            "comment_preview": comment_text[:200] if len(comment_text) > 200 else comment_text,
+        }
+        
+        try:
+            # Look for the comment textarea
+            textarea = self.page.query_selector('textarea[name="comment"]')
+            
+            if not textarea:
+                # Try clicking reply button first
+                reply_buttons = self.page.query_selector_all('button[data-testid="reply-button"], button:has-text("Reply")')
+                if reply_buttons:
+                    self.log("Clicking reply button...")
+                    reply_buttons[0].click()
+                    self.page.wait_for_timeout(1000)
+                    textarea = self.page.query_selector('textarea[name="comment"]')
+            
+            if textarea:
+                self.log(f"Entering comment: {comment_text[:50]}...")
+                textarea.click()
+                textarea.fill(comment_text)
+                
+                # Find and click submit button
+                submit_selectors = [
+                    'button[data-testid="comment-submit-button"]',
+                    'button:has-text("Comment")',
+                    'button[type="submit"]',
+                ]
+                
+                for selector in submit_selectors:
+                    submit_btn = self.page.query_selector(selector)
+                    if submit_btn and submit_btn.is_enabled():
+                        self.log("Submitting comment...")
+                        submit_btn.click()
+                        
+                        # Wait for comment to appear
+                        self.page.wait_for_timeout(2000)
+                        
+                        result["status"] = "success"
+                        self.log("Comment posted successfully!")
+                        return result
+                
+                result["status"] = "error"
+                result["error"] = "Could not find submit button"
+            else:
+                result["status"] = "error"
+                result["error"] = "Could not find comment textarea"
+                
+        except Exception as e:
+            result["status"] = "error"
+            result["error"] = str(e)
+            self.log(f"Error posting comment: {e}", "error")
+        
+        return result
+    
+    def _browse_and_warmup(self, subreddits: List[str]) -> Dict[str, Any]:
+        """
+        Browse subreddits and leave casual warmup comments.
+        
+        Args:
+            subreddits: List of subreddits to visit
+            
+        Returns:
+            Summary of warmup activity
+        """
+        results = {
+            "subreddits_visited": [],
+            "comments_attempted": 0,
+            "comments_posted": 0,
+            "posts_viewed": 0,
+        }
+        
+        target_comments = self.comments_per_round
+        comments_posted = 0
+        
+        for subreddit in subreddits:
+            if comments_posted >= target_comments:
+                break
+                
+            results["subreddits_visited"].append(subreddit)
+            
+            if self.mock_mode:
+                self.log(f"DRY-RUN: Would browse r/{subreddit}")
+                self.log(f"DRY-RUN: Found ~20 hot posts, would comment on {min(3, target_comments - comments_posted)}")
+                comments_posted += 1
+                results["comments_attempted"] += 1
+                results["posts_viewed"] += 5  # Simulate viewing posts
+                continue
+            
+            try:
+                # Navigate to subreddit
+                self.log(f"Visiting r/{subreddit}...")
+                self.page.goto(f"{self.BASE_URL}/r/{subreddit}/hot", timeout=30000)
+                self.page.wait_for_load_state("networkidle")
+                self.page.wait_for_timeout(1500)
+                
+                # Find post links
+                post_links = self.page.query_selector_all('a[data-click-id="body"]')
+                
+                for link in post_links[:5]:  # Check first 5 posts
+                    if comments_posted >= target_comments:
+                        break
+                    
+                    try:
+                        # Get post title
+                        title_elem = self.page.query_selector('h2')
+                        post_title = title_elem.inner_text() if title_elem else "Generic Post"
+                        
+                        # Get post URL
+                        href = link.get_attribute("href")
+                        if href and "/comments/" in href:
+                            full_url = href if href.startswith("http") else f"{self.BASE_URL}{href}"
+                            
+                            # Navigate to post
+                            if self._navigate_to_post(full_url):
+                                results["posts_viewed"] += 1
+                                
+                                # Generate warmup comment
+                                comment_text = self._get_warmup_comment(post_title, subreddit)
+                                
+                                # Post the comment
+                                post_result = self._post_comment(comment_text)
+                                
+                                if post_result["status"] == "success":
+                                    comments_posted += 1
+                                    results["comments_attempted"] += 1
+                                    results["comments_posted"] += 1
+                                    state_manager.mark_post_processed(full_url)
+                                    
+                                    # Random delay between posts (7-25 minutes for human-like behavior)
+                                    delay = random.randint(7, 25) * 60
+                                    self.log(f"Waiting {delay//60} minutes before next post...")
+                                    self.page.wait_for_timeout(min(delay, 5000))  # Cap at 5 seconds for testing
+                                    
+                    except Exception as e:
+                        self.log(f"Error processing post: {e}", "error")
+                        continue
+                        
+            except Exception as e:
+                self.log(f"Error browsing r/{subreddit}: {e}", "error")
+                continue
+        
+        return results
+    
+    def warmup(self, subreddits: List[str] = None) -> Dict[str, Any]:
+        """
+        Run the warmup routine - browse Reddit and leave casual comments.
+        
+        Args:
+            subreddits: List of subreddits to warm up in
+            
+        Returns:
+            Warmup results summary
+        """
+        default_subreddits = ["AskReddit", "funny", "pics", "todayilearned", "mildlyinteresting"]
+        target_subreddits = subreddits or default_subreddits
+        
+        self.log("=" * 50)
+        self.log("STARTING ZETA REDDIT WARMUP (Browser Mode)")
+        self.log(f"Mode: {'DRY-RUN' if self.mock_mode else 'LIVE'}")
+        self.log(f"Target subreddits: {target_subreddits}")
+        self.log(f"Comments per round: {self.comments_per_round}")
+        self.log("=" * 50)
+        
+        results = {
+            "success": False,
+            "login_success": False,
+            "warmup_results": {},
+            "mode": "dry_run" if self.mock_mode else "live",
+            "username": self.username,
+        }
+        
+        try:
+            # Login
+            results["login_success"] = self.login()
+            
+            if results["login_success"] or self.mock_mode:
+                # Run warmup
+                results["warmup_results"] = self._browse_and_warmup(target_subreddits)
+                results["success"] = True
+            else:
+                self.log("Cannot run warmup - login failed", "error")
+                
+        except Exception as e:
+            self.log(f"Warmup error: {e}", "error")
+            results["error"] = str(e)
+            
+        finally:
+            self._close_browser()
+        
+        self.log("=" * 50)
+        self.log("ZETA WARMUP COMPLETE")
+        self.log(f"Success: {results['success']}")
+        self.log(f"Comments posted: {results.get('warmup_results', {}).get('comments_posted', 0)}")
+        self.log("=" * 50)
+        
+        return results
+    
+    async def post_comment(
+        self,
+        submission_id: str,
+        comment_text: str,
+        parent_id: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        """
+        Post a comment (async interface for compatibility).
+        
+        Args:
+            submission_id: Reddit submission ID
+            comment_text: Comment text to post
+            parent_id: Optional parent comment ID
+            
+        Returns:
+            Result dictionary
+        """
+        # In mock mode, just return a dry-run result
+        if self.mock_mode or PUBLISHING_CONFIG["dry_run"]:
+            return {
+                "status": "dry_run",
+                "submission_id": submission_id,
+                "comment_preview": comment_text[:200],
+                "timestamp": datetime.now().isoformat(),
+            }
+        
+        # For live mode, this would need to be adapted
+        return {
+            "status": "not_implemented",
+            "message": "Use warmup() method for browser-based posting",
+            "timestamp": datetime.now().isoformat(),
+        }
+
+
+def run_warmup(
+    username: str,
+    password: str,
+    subreddits: List[str] = None,
+    dry_run: bool = True,
+    headless: bool = True,
+    comments_per_round: int = 3
+) -> Dict[str, Any]:
+    """
+    Convenience function to run warmup mode.
+    
+    Args:
+        username: Reddit username
+        password: Reddit password
+        subreddits: Target subreddits (defaults to popular ones)
+        dry_run: If True, simulate without posting
+        headless: Run browser in headless mode
+        comments_per_round: Number of comments per round
+        
+    Returns:
+        Warmup results
+    """
+    publisher = BrowserPublisher(
+        username=username,
+        password=password,
+        mock_mode=dry_run,
+        headless=headless,
+        comments_per_round=comments_per_round
+    )
+    
+    return publisher.warmup(subreddits=subreddits)

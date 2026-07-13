@@ -1,0 +1,30 @@
+name: Zeta Warmup Scheduler
+
+on:
+  schedule:
+    # Run at 09:00 and 18:00 UTC every day
+    - cron: '0 9,18 * * *'
+  workflow_dispatch:  # Allow manual trigger
+
+jobs:
+  warmup:
+    runs-on: self-hosted
+    timeout-minutes: 20
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install Python dependencies
+        run: |
+          pip install -r requirements.txt
+          python -m playwright install chromium --with-deps || true
+
+      - name: Run warmup (LIVE mode - native IP)
+        env:
+          REDDIT_USERNAME: ${{ secrets.REDDIT_USERNAME }}
+          REDDIT_PASSWORD: ${{ secrets.REDDIT_PASSWORD }}
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          USE_TOR: "false"
+          DRY_RUN: "false"
+        run: python warmup.py
