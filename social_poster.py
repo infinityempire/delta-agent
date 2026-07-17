@@ -537,13 +537,13 @@ def distribute_content(platforms=None):
 בוט טלגרם מבוסס AI של גוגל שתופר הודעות קוליות ארוכות והופך אותן לטקסט קריא ומדויק בפחות משתי שניות.
 
 💡 איך זה עובד?
-1. נכנסים לבוט בטלגרם: @VocalizeBot
+1. נכנסים לבוט בטלגרם: @replyq1_bot
 2. מעבירים לו (Forward) כל הודעה קולית שקיבלתם.
 3. מקבלים מיד את הטקסט ישירות לעיניים.
 
 🔥 בונוס לחברים בקבוצות: אתם יכולים להוסיף אותו ישירות לקבוצות שלכם, והוא יתמלל כל הודעה קולית שנשלחת שם אוטומטית!
 
-השירות חינמי לחלוטין לשימוש ראשוני. תתחילו לחסוך זמן פה: @VocalizeBot 🚀"""
+השירות חינמי לחלוטין לשימוש ראשוני. תתחילו לחסוך זמן פה: @replyq1_bot 🚀"""
 
     # English version for international audiences
     english_post = """Tired of endless voice messages? 🤯
@@ -553,19 +553,19 @@ I built a killer tool (Made in Israel 🇮🇱) that solves this in seconds!
 A Telegram bot powered by Google's AI that transcribes long voice messages into clean, accurate text in under 2 seconds.
 
 💡 How it works:
-1️⃣ Open the bot: @VocalizeBot
+1️⃣ Open the bot: @replyq1_bot
 2️⃣ Forward any voice message
 3️⃣ Get text instantly
 
 🔥 Group bonus: Add it to your Telegram groups and it auto-transcribes every voice message!
 
-Free for initial use. Start saving time now: @VocalizeBot 🚀
+Free for initial use. Start saving time now: @replyq1_bot 🚀
 
 #AI #Productivity #VoiceToText #Telegram #Israel"""
 
     # Short versions for limited-length platforms
-    short_hebrew = "נמאס מחפירות קוליות? 🇮🇱 בוט AI כחול-לבן שמתמלל ב-2 שניות! @VocalizeBot 🚀"
-    short_english = "Tired of voice message dumps? 🇮🇱 AI bot that transcribes in 2 seconds! @VocalizeBot 🚀"
+    short_hebrew = "נמאס מחפירות קוליות? 🇮🇱 בוט AI כחול-לבן שמתמלל ב-2 שניות! @replyq1_bot 🚀"
+    short_english = "Tired of voice message dumps? 🇮🇱 AI bot that transcribes in 2 seconds! @replyq1_bot 🚀"
 
     # Premium/Extended Hebrew version for Telegram
     extended_hebrew = """🚀 בשורה חדשה לבעלי עסקים!
@@ -582,7 +582,7 @@ Free for initial use. Start saving time now: @VocalizeBot 🚀
 💰 החל מ-299$ לחודש
 🎁 חינם ל-3 תמלולים ביום
 
-👉 t.me/VocalizeBot
+👉 t.me/replyq1_bot
 
 #אוטומציה #בוטים #שירות_לקוחות #בעלי_עסקים"""
 
@@ -694,11 +694,11 @@ Add it to Telegram groups, and it auto-transcribes every voice message. Everyone
 
 ## Try It Free
 
-The service is free for the first 5 transcriptions: @VocalizeBot 🚀
+The service is free for the first 5 transcriptions: @replyq1_bot 🚀
 
 ```python
 # Example: How the bot works
-1. User forwards voice message to @VocalizeBot
+1. User forwards voice message to @replyq1_bot
 2. Bot uses Google Speech-to-Text API
 3. AI processes and improves accuracy
 4. User receives clean text in <2 seconds
@@ -726,7 +726,7 @@ if __name__ == "__main__":
     print("""
 ╔══════════════════════════════════════════════════════════════╗
 ║  DELTA AGENT - Decentralized Social Media Distributor    ║
-║  Broadcasting VocalizeBot (@VocalizeBot) marketing         ║
+║  Broadcasting VocalizeBot (@replyq1_bot) marketing         ║
 ╚══════════════════════════════════════════════════════════════╝
     """)
     
