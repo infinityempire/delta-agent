@@ -1,6 +1,6 @@
 """
 Delta Agent - Decentralized Social Media Distributor
-Supports: Mastodon, Bluesky, Threads, Nostr, Lemmy, Pixelfed, Dev.to, Hashnode
+Supports: Telegram, Mastodon, Bluesky, Threads, Nostr, Lemmy, Pixelfed, Dev.to, Hashnode
 """
 
 import os
@@ -17,6 +17,11 @@ from typing import Optional, List, Dict
 load_dotenv()
 
 # ── Configuration ─────────────────────────────────────────────────────────────
+
+# Telegram Configuration (Broadcast to Groups)
+TELEGRAM_BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN", "")
+TELEGRAM_CHAT_IDS = os.environ.get("TELEGRAM_CHAT_IDS", "").split(",")
+TELEGRAM_DELAY_BETWEEN_POSTS = int(os.environ.get("TELEGRAM_DELAY_BETWEEN_POSTS", "300"))
 
 # Mastodon Configuration (Federated - ActivityPub)
 MASTODON_INSTANCES = os.environ.get("MASTODON_INSTANCES", "mastodon.social,fosstodon.org,hachyderm.io").split(",")
@@ -79,8 +84,8 @@ def log_result(platform, success, message):
         json.dump(logs, f, indent=2)
 
 # ── Telegram Posting ───────────────────────────────────────────────────────────
-def post_to_telegram(message, chat_id=None):
-    """Post message to Telegram bot/chat"""
+def post_to_telegram(message, chat_id=None, delay_between=300):
+    """Post message to Telegram bot/chat with anti-spam delays"""
     if not TELEGRAM_BOT_TOKEN:
         log_result("Telegram", False, "No bot token configured")
         return False
@@ -90,7 +95,12 @@ def post_to_telegram(message, chat_id=None):
     targets = [chat_id] if chat_id else [c.strip() for c in TELEGRAM_CHAT_IDS if c.strip()]
     
     success_count = 0
-    for target in targets:
+    total_targets = len(targets)
+    
+    print(f"\n[📱] Telegram Broadcasting to {total_targets} chat(s)...")
+    print(f"    Delay between posts: {delay_between} seconds ({delay_between//60} min)")
+    
+    for i, target in enumerate(targets):
         try:
             payload = {
                 "chat_id": target,
@@ -102,13 +112,66 @@ def post_to_telegram(message, chat_id=None):
             
             if response.status_code == 200:
                 success_count += 1
+                print(f"    ✅ [{i+1}/{total_targets}] Posted to {target[:20]}...")
             else:
-                print(f"  Telegram error to {target}: {response.text[:100]}")
+                error_msg = response.json().get("description", response.text[:100])
+                print(f"    ❌ [{i+1}/{total_targets}] Error to {target[:20]}: {error_msg}")
+            
+            # Anti-spam delay between posts (skip after last)
+            if i < total_targets - 1:
+                print(f"    ⏳ Waiting {delay_between}s before next post...")
+                time.sleep(delay_between)
+                
         except Exception as e:
-            print(f"  Telegram exception: {e}")
+            print(f"    ❌ [{i+1}/{total_targets}] Exception: {e}")
     
-    log_result("Telegram", success_count > 0, f"Posted to {success_count}/{len(targets)} chats")
+    log_result("Telegram", success_count > 0, f"Posted to {success_count}/{total_targets} chats")
     return success_count > 0
+
+
+def broadcast_to_telegram_groups(messages, delay_between=300):
+    """
+    Broadcast multiple messages to all configured Telegram groups.
+    Great for scheduled campaigns!
+    
+    Args:
+        messages: List of messages to send
+        delay_between: Seconds to wait between each message
+    """
+    if not TELEGRAM_BOT_TOKEN:
+        log_result("Telegram", False, "No bot token configured")
+        return {"success": False, "error": "No bot token"}
+    
+    results = []
+    total_messages = len(messages)
+    
+    print(f"\n{'='*60}")
+    print(f"📱 TELEGRAM BROADCAST CAMPAIGN")
+    print(f"   Messages to send: {total_messages}")
+    print(f"   Target groups: {len(TELEGRAM_CHAT_IDS)}")
+    print(f"   Delay between messages: {delay_between}s")
+    print(f"{'='*60}")
+    
+    for i, message in enumerate(messages):
+        print(f"\n[{i+1}/{total_messages}] Sending message...")
+        success = post_to_telegram(message, delay_between=delay_between)
+        results.append({
+            "message_index": i,
+            "success": success,
+            "timestamp": datetime.now().isoformat()
+        })
+        
+        # Delay between messages (skip after last)
+        if i < total_messages - 1:
+            print(f"   ⏳ Waiting {delay_between}s before next message...")
+            time.sleep(delay_between)
+    
+    success_count = sum(1 for r in results if r["success"])
+    print(f"\n{'='*60}")
+    print(f"✅ BROADCAST COMPLETE: {success_count}/{total_messages} messages sent")
+    print(f"{'='*60}")
+    
+    return {"success": True, "results": results}
 
 # ── Bluesky Posting ────────────────────────────────────────────────────────────
 def post_to_bluesky(text, image_path=None):
@@ -461,9 +524,13 @@ def post_to_hashnode(title, content, tags=None, cover_image_url=None):
 
 # ── Bulk Posting ──────────────────────────────────────────────────────────────
 def distribute_content(platforms=None):
-    """Distribute marketing content to all DECENTRALIZED platforms"""
+    """Distribute marketing content to all platforms"""
     
-    # Hebrew launch post (the exact copy provided)
+    # ═══════════════════════════════════════════════════════════
+    # 📱 VOCALIZEBOT MARKETING CONTENT
+    # ═══════════════════════════════════════════════════════════
+    
+    # Hebrew launch post
     hebrew_post = """נמאס לכם שחופרים לכם בהודעות קוליות ארוכות? 🤯
 
 בניתי כלי מטורף (כחול-לבן 🇮🇱) שפותר את זה בשנייה!
@@ -500,7 +567,41 @@ Free for initial use. Start saving time now: @replyq1_bot 🚀
     short_hebrew = "נמאס מחפירות קוליות? 🇮🇱 בוט AI כחול-לבן שמתמלל ב-2 שניות! @replyq1_bot 🚀"
     short_english = "Tired of voice message dumps? 🇮🇱 AI bot that transcribes in 2 seconds! @replyq1_bot 🚀"
 
+    # Premium/Extended Hebrew version for Telegram
+    extended_hebrew = """🚀 בשורה חדשה לבעלי עסקים!
+
+איבדתם פעם לקוח כי לא הספקתם להקשיב לכל ההודעות הקוליות?
+
+🎙️ VocalizeBot פותר את זה:
+
+▸ מתמלל הודעות קוליות לטקסט תוך שניות
+▸ עובד 24/7 - תמיד זמין
+▸ מזהה לידים חמים ומעלה את הציון שלהם
+▸ שולח התראות כשמישהו מעוניין ברכישה
+
+💰 החל מ-299$ לחודש
+🎁 חינם ל-3 תמלולים ביום
+
+👉 t.me/replyq1_bot
+
+#אוטומציה #בוטים #שירות_לקוחות #בעלי_עסקים"""
+
     results = {}
+    
+    # ═══════════════════════════════════════════════════════════
+    # 📱 TELEGRAM (Broadcast to Groups)
+    # ═══════════════════════════════════════════════════════════
+    if not platforms or "telegram" in platforms:
+        print("\n[📱] Posting to Telegram groups...")
+        if TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_IDS:
+            # Send the Hebrew post to all configured groups
+            messages_to_broadcast = [hebrew_post, extended_hebrew]
+            broadcast_result = broadcast_to_telegram_groups(messages_to_broadcast, delay_between=TELEGRAM_DELAY_BETWEEN_POSTS)
+            results["telegram"] = broadcast_result.get("success", False)
+        else:
+            print("    ⚠️ Telegram not configured - skipping")
+            results["telegram"] = False
+        time.sleep(2)
     
     # ═══════════════════════════════════════════════════════════
     # MASTODON (Federated - ActivityPub)
@@ -625,11 +726,12 @@ if __name__ == "__main__":
     print("""
 ╔══════════════════════════════════════════════════════════════╗
 ║  DELTA AGENT - Decentralized Social Media Distributor    ║
-║  Broadcasting zeta ai (@replyq1_bot) launch post          ║
+║  Broadcasting VocalizeBot (@replyq1_bot) marketing         ║
 ╚══════════════════════════════════════════════════════════════╝
     """)
     
-    print("📡 SUPPORTED DECENTRALIZED PLATFORMS:")
+    print("📡 SUPPORTED PLATFORMS:")
+    print("   📱 Telegram (Groups Broadcasting)")
     print("   🐘 Mastodon (ActivityPub)")
     print("   🌀 Bluesky (AT Protocol)")
     print("   ⚡ Nostr (Keys-Based)")
@@ -639,18 +741,21 @@ if __name__ == "__main__":
     print("   💻 Dev.to (Developer Community)")
     print()
     print(f"⏰ Timestamp: {datetime.now().isoformat()}")
-    print(f"🎯 Platforms: {platforms or 'ALL DECENTRALIZED NETWORKS'}")
+    print(f"🎯 Platforms: {platforms or 'ALL NETWORKS'}")
     print("=" * 60)
     
     results = distribute_content(platforms)
     
     print("\n" + "=" * 60)
     print("🚀 DISTRIBUTION COMPLETE")
-    success_count = sum(1 for v in results.values() if v)
+    success_count = sum(1 for v in results.values() if isinstance(v, bool) and v)
     print(f"✅ Success: {success_count}/{len(results)} platforms")
     print()
     print("📊 RESULTS:")
     for platform, success in results.items():
-        status = "✅" if success else "❌"
-        print(f"   {status} {platform}")
+        if isinstance(success, bool):
+            status = "✅" if success else "❌"
+            print(f"   {status} {platform}")
+        else:
+            print(f"   📝 {platform}")
     print("=" * 60)
