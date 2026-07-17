@@ -23,14 +23,14 @@ jobs:
 
       - name: Validate static bundle
         run: |
-          test -f public/index.html || { echo "::error::public/index.html missing"; exit 1; }
-          test -f public/sw.js || { echo "::error::public/sw.js missing"; exit 1; }
-          test -f public/manifest.webmanifest || { echo "::error::manifest missing"; exit 1; }
+          test -f index.html || { echo "::error::index.html missing"; exit 1; }
+          test -f sw.js || { echo "::error::sw.js missing"; exit 1; }
+          test -f manifest.webmanifest || { echo "::error::manifest.webmanifest missing"; exit 1; }
 
       - name: Upload Pages artefact
         uses: actions/upload-pages-artifact@v3
         with:
-          path: public
+          path: ./
 
       - name: Enable GitHub Pages
         env:
