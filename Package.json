@@ -1,7 +1,7 @@
 {
-  "name": "infinity-agent",
+  "name": "vocalizebot",
   "version": "1.0.0",
-  "description": "Infinity Agent – full-stack Node.js app with Render deployment",
+  "description": "VocalizeBot – AI-powered voice transcription Progressive Web App",
   "main": "server.js",
   "scripts": {
     "start": "node server.js",
@@ -11,13 +11,13 @@
     "test": "echo \"No tests configured yet\""
   },
   "keywords": [
-    "infinity",
-    "agent",
-    "nodejs",
-    "render",
-    "fullstack"
+    "vocalizebot",
+    "ai",
+    "voice",
+    "transcription",
+    "telegram"
   ],
-  "author": "Infinity Empire",
+  "author": "VocalizeBot",
   "license": "MIT",
   "dependencies": {
     "express": "^4.21.1",

@@ -1,7 +1,7 @@
 services:
   # שלב 1 – QA Service (רץ רק בזמן Build)
   - type: web
-    name: infinity-agent-qa
+    name: vocalizebot-qa
     env: node
     plan: free
     buildCommand: |
@@ -16,7 +16,7 @@ services:
 
   # שלב 2 – Production Service (רץ רק אם QA עבר)
   - type: web
-    name: infinity-agent
+    name: vocalizebot
     env: node
     plan: free
     buildCommand: npm run build

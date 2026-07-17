@@ -1,6 +1,6 @@
-# Infinity Agent PWA Shell
+# VocalizeBot PWA Shell
 
-This repository hosts the static Progressive Web App shell that fronts the Infinity Agent deployment on GitHub Pages. The bundle focuses on proving that the `/Infinity-agent` scope can operate offline and advertises a basic health-check endpoint powered entirely by the service worker.
+This repository hosts the static Progressive Web App shell that fronts the VocalizeBot deployment on GitHub Pages. The bundle focuses on proving that the `/VocalizeBot` scope can operate offline and advertises a basic health-check endpoint powered entirely by the service worker.
 
 ## Project layout
 - `public/index.html` – main entry document that registers the service worker and exposes the offline ping control.
@@ -16,9 +16,9 @@ This repository hosts the static Progressive Web App shell that fronts the Infin
    ```bash
    npx http-server public -p 4173 -c-1
    ```
-2. Visit <http://localhost:4173/Infinity-agent/>. The offline ping button should respond even if you toggle the browser to offline after the first load.
+2. Visit <http://localhost:4173/VocalizeBot/>. The offline ping button should respond even if you toggle the browser to offline after the first load.
 
-> ℹ️  The static server must respect the `/Infinity-agent` base path. The command above mirrors the GitHub Pages behaviour by serving the directory root and using cache-busting headers.
+> ℹ️  The static server must respect the `/VocalizeBot` base path. The command above mirrors the GitHub Pages behaviour by serving the directory root and using cache-busting headers.
 
 ---
 

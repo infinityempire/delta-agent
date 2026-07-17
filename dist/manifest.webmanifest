@@ -1,13 +1,13 @@
 {
-  "name": "Infinity Agent",
-  "short_name": "InfinityAgent",
-  "start_url": "/Infinity-agent/",
-  "scope": "/Infinity-agent/",
+  "name": "VocalizeBot",
+  "short_name": "VocalizeBot",
+  "start_url": "/VocalizeBot/",
+  "scope": "/VocalizeBot/",
   "display": "standalone",
   "background_color": "#0f172a",
   "theme_color": "#0f172a",
   "icons": [
-    { "src": "/Infinity-agent/icon-192.png", "sizes": "192x192", "type": "image/png" },
-    { "src": "/Infinity-agent/icon-512.png", "sizes": "512x512", "type": "image/png" }
+    { "src": "/VocalizeBot/icon-192.png", "sizes": "192x192", "type": "image/png" },
+    { "src": "/VocalizeBot/icon-512.png", "sizes": "512x512", "type": "image/png" }
   ]
 }

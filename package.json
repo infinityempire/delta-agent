@@ -1,7 +1,7 @@
 {
-  "name": "infinity-agent",
+  "name": "vocalizebot",
   "version": "1.0.0",
-  "description": "Infinity Agent – Node.js app with Render + Postgres",
+  "description": "VocalizeBot – AI-powered voice transcription Progressive Web App",
   "type": "module",
   "main": "server.js",
   "scripts": {
@@ -22,12 +22,12 @@
   },
   "devDependencies": {},
   "keywords": [
-    "infinity",
-    "agent",
-    "nodejs",
-    "render",
-    "postgres"
+    "vocalizebot",
+    "ai",
+    "voice",
+    "transcription",
+    "telegram"
   ],
-  "author": "Infinity Empire",
+  "author": "VocalizeBot",
   "license": "MIT"
 }
