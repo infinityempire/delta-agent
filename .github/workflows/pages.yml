@@ -21,16 +21,18 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Validate static bundle
+      - name: Prepare PWA bundle
         run: |
-          test -f index.html || { echo "::error::index.html missing"; exit 1; }
-          test -f sw.js || { echo "::error::sw.js missing"; exit 1; }
-          test -f manifest.webmanifest || { echo "::error::manifest.webmanifest missing"; exit 1; }
+          mkdir -p _site
+          cp index.html sw.js manifest.webmanifest icon-192.png icon-512.png icon.svg 404.html _site/ 2>/dev/null || true
+          test -f _site/index.html || { echo "::error::index.html missing"; exit 1; }
+          test -f _site/sw.js || { echo "::error::sw.js missing"; exit 1; }
+          test -f _site/manifest.webmanifest || { echo "::error::manifest missing"; exit 1; }
 
       - name: Upload Pages artefact
         uses: actions/upload-pages-artifact@v3
         with:
-          path: ./
+          path: _site
 
       - name: Enable GitHub Pages
         env:
