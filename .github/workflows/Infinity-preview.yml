@@ -39,6 +39,6 @@ jobs:
           echo "🌍 App running on http://localhost:3000"
 
       - name: 🔗 Expose Preview via GitHub
-        uses: jwalton/gh-docker-urls@v2
-        with:
-          port: 3000
+        run: |
+          echo "Preview running at http://localhost:3000"
+          echo "::notice title=Preview URL::The Infinity Agent preview is available at http://localhost:3000"

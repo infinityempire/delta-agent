@@ -36,8 +36,19 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          gh api -X PUT "repos/${{ github.repository }}/pages" -f build_type=workflow >/dev/null || true
-          gh api -X PUT "repos/${{ github.repository }}/pages/site" -H "Accept: application/vnd.github+json" >/dev/null || true
+          echo "Checking GitHub Pages configuration..."
+          # Check if GitHub Pages is enabled
+          PAGES_STATUS=$(gh api "repos/${{ github.repository }}/pages" --jq '.status' 2>/dev/null || echo "not_configured")
+          echo "Current GitHub Pages status: $PAGES_STATUS"
+          
+          if [ "$PAGES_STATUS" = "not_configured" ]; then
+            echo "::warning::GitHub Pages is not configured. Please enable it in repository settings -> Pages -> Source: GitHub Actions"
+            # Enable Pages with GitHub Actions source
+            gh api -X PUT "repos/${{ github.repository }}/pages" -f build_type=workflow || echo "Could not enable GitHub Pages - may require manual configuration"
+          fi
+          
+          # Ensure the deployment target is correct
+          gh api -X POST "repos/${{ github.repository }}/pages/deployment" -H "Accept: application/vnd.github+json" || echo "Deployment target update skipped"
 
       - name: Deploy to Pages
         uses: actions/deploy-pages@v4

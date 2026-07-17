@@ -41,15 +41,21 @@ jobs:
           SCRAPER_API_KEY: ${{ secrets.SCRAPER_API_KEY }}
           SCRAPINGBEE_API_KEY: ${{ secrets.SCRAPINGBEE_API_KEY }}
           AGENT_GOAL: ${{ github.event.inputs.goal }}
+          # Social Media Tokens
+          MASTODON_TOKEN: ${{ secrets.MASTODON_TOKEN }}
+          BLUESKY_HANDLE: ${{ secrets.BLUESKY_HANDLE }}
+          BLUESKY_PASSWORD: ${{ secrets.BLUESKY_PASSWORD }}
+          LEMMY_TOKEN: ${{ secrets.LEMMY_TOKEN }}
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
         run: |
-          python3 delta_agent.py
+          python3 social_poster.py
 
       - name: Upload execution report
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: delta-execution-report
-          path: output/
+          path: output
           if-no-files-found: warn
 
       - name: Notify on workflow failure
